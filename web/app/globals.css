@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f5f0;
+  --surface: #ffffff;
+  --panel: #f1efe6;
+  --ink: #141414;
+  --muted: #8c8a86;
+  --border: #e7e4da;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+}
