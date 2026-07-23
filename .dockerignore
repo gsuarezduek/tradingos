@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+data/historical/*.parquet
+.git/
+tests/
+scripts/
+*.pdf
+README.md
