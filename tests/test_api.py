@@ -113,3 +113,45 @@ def test_optimize_rejects_empty_grid():
     }
     response = client.post("/optimize", json=payload)
     assert response.status_code == 400
+
+
+def test_montecarlo_demo_returns_ordered_percentiles():
+    response = client.get("/montecarlo/demo")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["num_simulations"] == 1000
+    equity_values = [body["final_equity_percentiles"][f"p{p}"] for p in (5, 25, 50, 75, 95)]
+    assert equity_values == sorted(equity_values)
+    assert 0.0 <= body["probability_of_profit"] <= 1.0
+
+
+def test_montecarlo_returns_requested_num_simulations():
+    payload = {
+        "strategy": "ma_crossover",
+        "dataset": "BTCUSDT_1h.parquet",
+        "config": {
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "stop_loss_pct": 0.02,
+            "indicators": {
+                "ema_fast": {"period": 12},
+                "ema_slow": {"period": 26},
+                "atr": {"period": 14, "min_value_pct": 0.001},
+            },
+        },
+        "num_simulations": 50,
+    }
+    response = client.post("/montecarlo", json=payload)
+    assert response.status_code == 200
+    assert response.json()["num_simulations"] == 50
+
+
+def test_montecarlo_rejects_oversized_num_simulations():
+    payload = {
+        "strategy": "ma_crossover",
+        "dataset": "BTCUSDT_1h.parquet",
+        "config": {"symbol": "BTCUSDT", "timeframe": "1h", "stop_loss_pct": 0.02},
+        "num_simulations": 10_000,
+    }
+    response = client.post("/montecarlo", json=payload)
+    assert response.status_code == 400

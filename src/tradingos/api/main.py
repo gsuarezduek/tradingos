@@ -9,8 +9,10 @@ from pydantic import BaseModel
 import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles)
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
+from tradingos.backtest.result import BacktestResult
 from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list_strategies
 from tradingos.data.loader import load_ohlcv
+from tradingos.montecarlo.simulator import MonteCarloResult, run_monte_carlo
 from tradingos.optimize.grid import ParameterGrid, combination_count
 from tradingos.optimize.optimizer import OptimizationResult, run_grid_search
 from tradingos.strategies.ma_crossover import default_config
@@ -36,6 +38,12 @@ MAX_GRID_COMBINATIONS = 12
 _DEMO_GRID: ParameterGrid = {
     "indicators.ema_fast.period": [8, 12],
 }
+
+# A diferencia del grid search, el Monte Carlo resamplea los P&L de los trades ya
+# calculados por un único backtest (numpy puro sobre una lista corta de números): no
+# vuelve a correr el motor bar-a-bar por simulación, así que el límite acá es solo
+# para no devolver una respuesta desproporcionada, no por riesgo de bloquear el server.
+MAX_MONTE_CARLO_SIMULATIONS = 5000
 
 app = FastAPI(title="Trading OS API", version="0.1.0")
 
@@ -64,11 +72,15 @@ def _resolve_strategy(name: str) -> type[Strategy]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def _run_backtest(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> dict:
+def _run_backtest_result(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> BacktestResult:
     data = load_ohlcv(dataset_path)
     strategy = strategy_cls(config)
     engine = BacktestEngine(strategy, SimulatedBroker(BrokerSimConfig()), initial_equity=initial_equity)
-    result = engine.run(data)
+    return engine.run(data)
+
+
+def _run_backtest(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> dict:
+    result = _run_backtest_result(strategy_cls, config, dataset_path, initial_equity)
     weekly_equity = result.equity_curve.resample("W").last().dropna()
     return {
         "num_trades": len(result.trades),
@@ -149,3 +161,57 @@ def optimize_demo() -> dict:
     data = load_ohlcv(dataset_path)
     results = run_grid_search(strategy_cls, default_config(), _DEMO_GRID, data, initial_equity=10_000.0)
     return _serialize_optimization(results, _DEMO_GRID, top_n=10)
+
+
+def _serialize_monte_carlo(result: MonteCarloResult) -> dict:
+    return {
+        "num_simulations": result.num_simulations,
+        "initial_equity": result.initial_equity,
+        "original_metrics": result.original_metrics,
+        "final_equity_percentiles": result.final_equity_percentiles,
+        "max_drawdown_percentiles": result.max_drawdown_percentiles,
+        "probability_of_profit": result.probability_of_profit,
+    }
+
+
+class MonteCarloRequest(BaseModel):
+    strategy: str
+    dataset: str
+    config: StrategyConfig
+    initial_equity: float = 10_000.0
+    num_simulations: int = 1000
+
+
+@app.post("/montecarlo")
+def montecarlo(request: MonteCarloRequest) -> dict:
+    if not 0 < request.num_simulations <= MAX_MONTE_CARLO_SIMULATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"num_simulations debe estar entre 1 y {MAX_MONTE_CARLO_SIMULATIONS}",
+        )
+
+    dataset_path = _resolve_dataset(request.dataset)
+    strategy_cls = _resolve_strategy(request.strategy)
+
+    backtest_result = _run_backtest_result(strategy_cls, request.config, dataset_path, request.initial_equity)
+    mc_result = run_monte_carlo(
+        backtest_result.trades,
+        request.initial_equity,
+        backtest_result.metrics,
+        num_simulations=request.num_simulations,
+    )
+    return _serialize_monte_carlo(mc_result)
+
+
+@app.get("/montecarlo/demo")
+def montecarlo_demo() -> dict:
+    """Monte Carlo fijo (ma_crossover sobre BTCUSDT 1h), mismo espíritu que
+    /backtests/demo y /optimize/demo. A diferencia de /optimize/demo, acá el costo
+    dominante es el único backtest previo: resamplear sus trades con numpy es barato
+    aunque num_simulations sea alto."""
+    dataset_path = DATA_DIR / DEMO_DATASET
+    strategy_cls = get_strategy("ma_crossover")
+
+    backtest_result = _run_backtest_result(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)
+    mc_result = run_monte_carlo(backtest_result.trades, 10_000.0, backtest_result.metrics, num_simulations=1000)
+    return _serialize_monte_carlo(mc_result)
