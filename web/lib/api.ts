@@ -45,3 +45,83 @@ export async function getLiveBacktest(): Promise<LiveBacktest | null> {
     return null;
   }
 }
+
+export interface OptimizationRow {
+  emaFastPeriod: number;
+  stopLossPct: number;
+  profitFactor: number;
+  maxDrawdownPct: number;
+  numTrades: number;
+}
+
+export interface LiveOptimization {
+  totalCombinations: number;
+  results: OptimizationRow[];
+}
+
+// Grid search fijo (ma_crossover sobre BTCUSDT 1h) servido por GET /optimize/demo.
+// A diferencia de /backtests/demo, acá el timeout es más generoso (20s, no 5s): corre
+// 2 backtests reales en vez de uno, y medido en producción ese endpoint solo ya tardó
+// hasta ~15s (single-worker, variable según carga del proceso).
+export async function getLiveOptimization(): Promise<LiveOptimization | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/optimize/demo`, {
+      signal: AbortSignal.timeout(20000),
+      next: { revalidate: 300 },
+    });
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return {
+      totalCombinations: data.total_combinations,
+      results: data.results.map(
+        (r: { config: { indicators: { ema_fast: { period: number } }; stop_loss_pct: number }; metrics: { profit_factor: number; max_drawdown: number; num_trades: number } }) => ({
+          emaFastPeriod: r.config.indicators.ema_fast.period,
+          stopLossPct: r.config.stop_loss_pct,
+          profitFactor: r.metrics.profit_factor,
+          maxDrawdownPct: r.metrics.max_drawdown * 100,
+          numTrades: r.metrics.num_trades,
+        }),
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type PercentileKey = "p5" | "p25" | "p50" | "p75" | "p95";
+export type Percentiles = Record<PercentileKey, number>;
+
+export interface LiveMonteCarlo {
+  numSimulations: number;
+  initialEquity: number;
+  originalMetrics: LiveBacktestMetrics;
+  finalEquityPercentiles: Percentiles;
+  maxDrawdownPercentiles: Percentiles;
+  probabilityOfProfit: number;
+}
+
+// Monte Carlo fijo (ma_crossover sobre BTCUSDT 1h) servido por GET /montecarlo/demo.
+// Mismo motivo que /optimize/demo: el costo dominante es el backtest previo, que en
+// producción se midió hasta ~15s (single-worker, variable según carga del proceso).
+export async function getLiveMonteCarlo(): Promise<LiveMonteCarlo | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/montecarlo/demo`, {
+      signal: AbortSignal.timeout(20000),
+      next: { revalidate: 300 },
+    });
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return {
+      numSimulations: data.num_simulations,
+      initialEquity: data.initial_equity,
+      originalMetrics: data.original_metrics,
+      finalEquityPercentiles: data.final_equity_percentiles,
+      maxDrawdownPercentiles: data.max_drawdown_percentiles,
+      probabilityOfProfit: data.probability_of_profit,
+    };
+  } catch {
+    return null;
+  }
+}
