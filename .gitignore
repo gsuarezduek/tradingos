@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 data/historical/*.parquet
+!data/historical/BTCUSDT_1h.parquet
 .DS_Store
 .claude/

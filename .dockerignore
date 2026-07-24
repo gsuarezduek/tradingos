@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 data/historical/*.parquet
+!data/historical/BTCUSDT_1h.parquet
 .git/
 tests/
 scripts/

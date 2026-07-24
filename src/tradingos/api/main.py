@@ -8,10 +8,12 @@ from pydantic import BaseModel
 import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles)
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
-from tradingos.core.strategy import StrategyConfig, get_strategy, list_strategies
+from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list_strategies
 from tradingos.data.loader import load_ohlcv
+from tradingos.strategies.ma_crossover import default_config
 
 DATA_DIR = (Path(__file__).resolve().parents[3] / "data" / "historical").resolve()
+DEMO_DATASET = "BTCUSDT_1h.parquet"
 
 app = FastAPI(title="Trading OS API", version="0.1.0")
 
@@ -24,6 +26,19 @@ def health() -> dict[str, str]:
 @app.get("/strategies")
 def strategies() -> list[str]:
     return list_strategies()
+
+
+def _run_backtest(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> dict:
+    data = load_ohlcv(dataset_path)
+    strategy = strategy_cls(config)
+    engine = BacktestEngine(strategy, SimulatedBroker(BrokerSimConfig()), initial_equity=initial_equity)
+    result = engine.run(data)
+    weekly_equity = result.equity_curve.resample("W").last().dropna()
+    return {
+        "num_trades": len(result.trades),
+        "metrics": result.metrics,
+        "equity_curve": [{"timestamp": ts.isoformat(), "equity": float(value)} for ts, value in weekly_equity.items()],
+    }
 
 
 class BacktestRequest(BaseModel):
@@ -44,8 +59,13 @@ def run_backtest(request: BacktestRequest) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    data = load_ohlcv(dataset_path)
-    strategy = strategy_cls(request.config)
-    engine = BacktestEngine(strategy, SimulatedBroker(BrokerSimConfig()), initial_equity=request.initial_equity)
-    result = engine.run(data)
-    return {"num_trades": len(result.trades), "metrics": result.metrics}
+    return _run_backtest(strategy_cls, request.config, dataset_path, request.initial_equity)
+
+
+@app.get("/backtests/demo")
+def demo_backtest() -> dict:
+    """Backtest fijo (ma_crossover sobre BTCUSDT 1h) para alimentar el dashboard con un
+    resultado real sin que el cliente tenga que mandar un StrategyConfig completo."""
+    dataset_path = DATA_DIR / DEMO_DATASET
+    strategy_cls = get_strategy("ma_crossover")
+    return _run_backtest(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)

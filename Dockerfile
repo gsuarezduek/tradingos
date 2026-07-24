@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY src ./src
+COPY data/historical/BTCUSDT_1h.parquet ./data/historical/BTCUSDT_1h.parquet
 
 RUN pip install --no-cache-dir .
 

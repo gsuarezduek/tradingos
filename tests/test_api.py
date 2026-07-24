@@ -45,3 +45,15 @@ def test_backtest_rejects_unknown_strategy():
     }
     response = client.post("/backtests", json=payload)
     assert response.status_code == 404
+
+
+def test_demo_backtest_includes_equity_curve():
+    response = client.get("/backtests/demo")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["num_trades"] > 0
+    assert "metrics" in body
+    assert len(body["equity_curve"]) > 0
+    first_point = body["equity_curve"][0]
+    assert "timestamp" in first_point
+    assert "equity" in first_point
