@@ -1,4 +1,5 @@
 import { DataBadge } from "@/components/DataBadge";
+import { InfoGuide } from "@/components/InfoGuide";
 import { getLiveOptimization } from "@/lib/api";
 
 export default async function OptimizadorPage() {
@@ -8,7 +9,15 @@ export default async function OptimizadorPage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Optimizador</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+            Optimizador
+            <InfoGuide>
+              Corre la estrategia EMA Crossover sobre BTCUSDT con varias combinaciones de parámetros (grid
+              search) y las ordena por profit factor. Sirve para ver qué valores funcionaron mejor sobre datos
+              históricos — no es una garantía de resultados futuros, y hoy corre una grilla chica fija (pensada
+              para responder rápido) en vez de explorar miles de combinaciones.
+            </InfoGuide>
+          </h1>
           <p className="text-sm text-muted">Grid search sobre EMA Crossover BTC</p>
         </div>
         <DataBadge live={optimization !== null} label={optimization ? "Grid search real" : "No disponible"} />

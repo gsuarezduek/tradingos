@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { DataBadge } from "@/components/DataBadge";
+import { InfoGuide } from "@/components/InfoGuide";
 import { TopMetricsPanel } from "@/components/TopMetricsPanel";
 import type { LiveBacktestMetrics } from "@/lib/api";
 
@@ -130,7 +131,15 @@ export default function ConstructorPage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Constructor de Estrategias</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+            Constructor de Estrategias
+            <InfoGuide>
+              Ajustá los parámetros de la estrategia EMA Crossover (medias móviles, ATR, stop loss, take
+              profit, trailing stop, riesgo por operación) y corré un backtest real sobre BTCUSDT 1h con el
+              botón &quot;Correr backtest&quot;. Hoy el símbolo, el timeframe y el dataset están fijos porque es
+              lo único que hay deployado; un backtest real puede tardar varios segundos.
+            </InfoGuide>
+          </h1>
           <p className="text-sm text-muted">EMA Crossover · BTCUSDT · 1h</p>
         </div>
         <DataBadge live={result !== null} label={result ? "Backtest real" : "Configurá y corré"} />

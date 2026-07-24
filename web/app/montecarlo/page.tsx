@@ -1,4 +1,5 @@
 import { DataBadge } from "@/components/DataBadge";
+import { InfoGuide } from "@/components/InfoGuide";
 import { PercentileTable } from "@/components/PercentileTable";
 import { getLiveMonteCarlo } from "@/lib/api";
 
@@ -17,7 +18,16 @@ export default async function MonteCarloPage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Simulación Monte Carlo</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+            Simulación Monte Carlo
+            <InfoGuide>
+              Toma los trades de un backtest real y los resamplea miles de veces en distinto orden para
+              estimar qué tan sensible es el resultado a la secuencia exacta en que ocurrieron las operaciones.
+              La &quot;probabilidad de profit&quot; y los percentiles de equity/drawdown muestran un rango de
+              resultados posibles, no una predicción — compará contra el profit factor y drawdown del backtest
+              real para juzgar qué tan robusto es.
+            </InfoGuide>
+          </h1>
           <p className="text-sm text-muted">Robustez del resultado de EMA Crossover BTC</p>
         </div>
         <DataBadge live={mc !== null} label={mc ? "Simulación real" : "No disponible"} />

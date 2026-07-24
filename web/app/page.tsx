@@ -1,4 +1,5 @@
 import { DataBadge } from "@/components/DataBadge";
+import { InfoGuide } from "@/components/InfoGuide";
 import { TopMetricsPanel } from "@/components/TopMetricsPanel";
 import { StrategyBoard } from "@/components/StrategyBoard";
 import { getLiveBacktest } from "@/lib/api";
@@ -34,7 +35,16 @@ export default async function Home() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+            Dashboard
+            <InfoGuide>
+              Vista general de tu operativa. El panel de arriba muestra la evolución semanal del equity, el win
+              rate y las operaciones cerradas de la estrategia de ejemplo (EMA Crossover BTC) cuando hay un
+              backtest real disponible; si no, se completa con datos de ejemplo para no dejar la pantalla vacía.
+              Abajo, el tablero agrupa tus estrategias por estado (activas, en paper trading, en backtesting,
+              pausadas).
+            </InfoGuide>
+          </h1>
           <p className="text-sm text-muted">Vista general de tu operativa</p>
         </div>
         <DataBadge live={false} label="Estrategias de ejemplo" />
