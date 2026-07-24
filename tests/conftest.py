@@ -1,3 +1,11 @@
+import os
+
+# Tiene que setearse antes de que cualquier test importe tradingos.api.main (que a su
+# vez importa tradingos.db.session, donde se lee DATABASE_URL a nivel de módulo).
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-at-least-32-bytes-long")
+os.environ.setdefault("ENCRYPTION_KEY", "2l1htVa-fcs-u_vakta0b7uMkvQxdBm8mf5BbP9zMD8=")
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -30,3 +38,15 @@ def _synthetic_ohlcv(n: int = 300) -> pd.DataFrame:
 @pytest.fixture
 def synthetic_ohlcv() -> pd.DataFrame:
     return _synthetic_ohlcv()
+
+
+@pytest.fixture(autouse=True)
+def _reset_db():
+    """Aisla cada test: recrea el schema antes y lo tira después. Es barato porque
+    DATABASE_URL en tests apunta a sqlite en memoria (ver arriba)."""
+    from tradingos.db.models import Base
+    from tradingos.db.session import engine
+
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)

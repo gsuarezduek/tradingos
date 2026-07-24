@@ -1,0 +1,196 @@
+from fastapi.testclient import TestClient
+
+from tradingos.api.main import app
+from tradingos.connectors.binance import BinanceAPIError
+from tradingos.db.models import BrokerConnection
+from tradingos.db.session import SessionLocal
+
+client = TestClient(app)
+
+
+def _register_and_get_token(email: str) -> str:
+    response = client.post("/auth/register", json={"email": email, "password": "hunter22"})
+    return response.json()["access_token"]
+
+
+def _auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_test_balances_returns_ok_sections_without_saving(monkeypatch):
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.get_spot_balances",
+        lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
+    )
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.get_futures_usdm_balances",
+        lambda api_key, api_secret: [{"asset": "USDT", "balance": 10.0, "available_balance": 10.0, "cross_unrealized_pnl": 0.0}],
+    )
+    response = client.post("/brokers/binance/balances", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"] == {"ok": True, "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]}
+    assert body["futures_usdm"]["ok"] is True
+
+    db = SessionLocal()
+    try:
+        assert db.query(BrokerConnection).count() == 0
+    finally:
+        db.close()
+
+
+def test_test_balances_reports_per_section_error(monkeypatch):
+    def _raise(api_key, api_secret):
+        raise BinanceAPIError("Invalid API-key, IP, or permissions for action.")
+
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", _raise)
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_futures_usdm_balances", lambda api_key, api_secret: [])
+
+    response = client.post("/brokers/binance/balances", json={"api_key": "bad", "api_secret": "bad"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"] == {"ok": False, "error": "Invalid API-key, IP, or permissions for action."}
+    assert body["futures_usdm"] == {"ok": True, "balances": []}
+
+
+def test_test_balances_rejects_empty_credentials():
+    response = client.post("/brokers/binance/balances", json={"api_key": "", "api_secret": ""})
+    assert response.status_code == 400
+
+
+def test_create_connection_requires_auth():
+    response = client.post("/brokers/binance/connections", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 401
+
+
+def test_create_connection_validates_credentials_before_saving(monkeypatch):
+    def _raise(api_key, api_secret):
+        raise BinanceAPIError("bad key")
+
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", _raise)
+    token = _register_and_get_token("f@example.com")
+
+    response = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "bad", "api_secret": "bad", "label": "Test"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+
+    db = SessionLocal()
+    try:
+        assert db.query(BrokerConnection).count() == 0
+    finally:
+        db.close()
+
+
+def test_create_connection_persists_encrypted_not_plaintext(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("g@example.com")
+
+    response = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "my-real-key", "api_secret": "my-real-secret", "label": "Cuenta principal"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["label"] == "Cuenta principal"
+    assert "api_key" not in body
+    assert "api_secret" not in body
+
+    db = SessionLocal()
+    try:
+        connection = db.query(BrokerConnection).one()
+        assert connection.api_key_encrypted != "my-real-key"
+        assert connection.api_secret_encrypted != "my-real-secret"
+        assert "my-real-key" not in connection.api_key_encrypted
+    finally:
+        db.close()
+
+
+def test_list_connections_only_returns_own_user(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token_a = _register_and_get_token("owner@example.com")
+    token_b = _register_and_get_token("other@example.com")
+
+    client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "De A"},
+        headers=_auth_headers(token_a),
+    )
+
+    response_a = client.get("/brokers/binance/connections", headers=_auth_headers(token_a))
+    response_b = client.get("/brokers/binance/connections", headers=_auth_headers(token_b))
+
+    assert len(response_a.json()) == 1
+    assert response_a.json()[0]["label"] == "De A"
+    assert response_b.json() == []
+
+
+def test_delete_connection_of_another_user_returns_404(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token_a = _register_and_get_token("owner2@example.com")
+    token_b = _register_and_get_token("other2@example.com")
+
+    created = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "De A"},
+        headers=_auth_headers(token_a),
+    )
+    connection_id = created.json()["id"]
+
+    response = client.delete(f"/brokers/binance/connections/{connection_id}", headers=_auth_headers(token_b))
+    assert response.status_code == 404
+
+
+def test_delete_connection_removes_it(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("h@example.com")
+
+    created = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "Borrar"},
+        headers=_auth_headers(token),
+    )
+    connection_id = created.json()["id"]
+
+    delete_response = client.delete(f"/brokers/binance/connections/{connection_id}", headers=_auth_headers(token))
+    assert delete_response.status_code == 204
+
+    list_response = client.get("/brokers/binance/connections", headers=_auth_headers(token))
+    assert list_response.json() == []
+
+
+def test_connection_balances_decrypts_and_calls_connector(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("i@example.com")
+
+    created = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "real-key", "api_secret": "real-secret", "label": "Saldos"},
+        headers=_auth_headers(token),
+    )
+    connection_id = created.json()["id"]
+
+    seen_credentials = []
+
+    def _fake_spot(api_key, api_secret):
+        seen_credentials.append((api_key, api_secret))
+        return [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]
+
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", _fake_spot)
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_futures_usdm_balances", lambda api_key, api_secret: [])
+
+    response = client.get(f"/brokers/binance/connections/{connection_id}/balances", headers=_auth_headers(token))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"]["ok"] is True
+    assert body["spot"]["balances"][0]["asset"] == "BTC"
+    assert seen_credentials == [("real-key", "real-secret")]
+
+
+def test_connection_balances_for_missing_connection_returns_404():
+    token = _register_and_get_token("j@example.com")
+    response = client.get("/brokers/binance/connections/999/balances", headers=_auth_headers(token))
+    assert response.status_code == 404

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Blocks,
@@ -16,6 +16,9 @@ import {
   FileStack,
   Bot,
   Settings,
+  Plug,
+  LogIn,
+  LogOut,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,12 +32,20 @@ const modules: { label: string; icon: LucideIcon; href?: string }[] = [
   { label: "Gestión de Riesgo", icon: ShieldAlert },
   { label: "Journal de Trading", icon: NotebookPen },
   { label: "Portfolio de Estrategias", icon: PieChart },
+  { label: "Conexión con Exchanges", icon: Plug, href: "/conexiones" },
   { label: "Paper Trading", icon: FileStack },
   { label: "Trading Automático", icon: Bot },
 ];
 
-export function Sidebar() {
+export function Sidebar({ hasSession }: { hasSession: boolean }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
 
   return (
     <aside className="hidden w-72 shrink-0 border-r border-border bg-surface p-6 lg:flex lg:flex-col">
@@ -94,8 +105,26 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto pt-8">
+        {hasSession ? (
+          <button
+            onClick={logout}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-muted hover:text-ink"
+          >
+            <LogOut size={18} />
+            <span className="flex-1 text-left">Cerrar sesión</span>
+          </button>
+        ) : (
+          <Link
+            href="/login"
+            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-muted hover:text-ink"
+          >
+            <LogIn size={18} />
+            <span className="flex-1">Iniciar sesión</span>
+          </Link>
+        )}
+
         <div
-          className="flex cursor-not-allowed items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted"
+          className="mt-1 flex cursor-not-allowed items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted"
           title="Próximamente"
         >
           <Settings size={18} />

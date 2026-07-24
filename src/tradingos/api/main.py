@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles)
+from tradingos.api.routers import auth as auth_router
+from tradingos.api.routers import brokers as brokers_router
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.backtest.result import BacktestResult
 from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list_strategies
 from tradingos.data.loader import load_ohlcv
+from tradingos.db.models import Base
+from tradingos.db.session import engine
 from tradingos.montecarlo.simulator import MonteCarloResult, run_monte_carlo
 from tradingos.optimize.grid import ParameterGrid, combination_count
 from tradingos.optimize.optimizer import OptimizationResult, run_grid_search
@@ -45,7 +50,18 @@ _DEMO_GRID: ParameterGrid = {
 # para no devolver una respuesta desproporcionada, no por riesgo de bloquear el server.
 MAX_MONTE_CARLO_SIMULATIONS = 5000
 
-app = FastAPI(title="Trading OS API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Sin Alembic todavía: el schema es nuevo y create_all es idempotente. El día que
+    # haga falta una migración real (no solo crear tablas que no existen), se introduce.
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="Trading OS API", version="0.1.0", lifespan=lifespan)
+app.include_router(auth_router.router)
+app.include_router(brokers_router.router)
 
 
 @app.get("/health")

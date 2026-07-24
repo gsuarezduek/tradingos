@@ -7,3 +7,4 @@ data/historical/*.parquet
 !data/historical/BTCUSDT_1h.parquet
 .DS_Store
 .claude/
+*.db

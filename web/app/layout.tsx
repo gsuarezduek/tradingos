@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { getSessionToken } from "@/lib/session";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -13,16 +14,18 @@ export const metadata: Metadata = {
   description: "Sistema operativo para trading cuantitativo",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const hasSession = (await getSessionToken()) !== null;
+
   return (
     <html lang="es" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full bg-background text-ink">
         <div className="flex min-h-screen">
-          <Sidebar />
+          <Sidebar hasSession={hasSession} />
           <main className="flex-1 p-6 lg:p-8">{children}</main>
         </div>
       </body>

@@ -15,6 +15,12 @@ dependencies = [
     "requests>=2.31",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "bcrypt>=4.1",
+    "pyjwt>=2.8",
+    "cryptography>=42.0",
+    "email-validator>=2.1",
 ]
 
 [project.optional-dependencies]
