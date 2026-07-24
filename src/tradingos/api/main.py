@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -12,7 +13,11 @@ from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list
 from tradingos.data.loader import load_ohlcv
 from tradingos.strategies.ma_crossover import default_config
 
-DATA_DIR = (Path(__file__).resolve().parents[3] / "data" / "historical").resolve()
+# No se puede derivar de __file__: bajo una instalación no editable (como en la imagen
+# Docker) el paquete vive en site-packages, desconectado del checkout del repo. Se
+# resuelve contra el directorio de trabajo (la raíz del repo, tanto localmente como en
+# el WORKDIR del contenedor), con override explícito disponible para otros layouts.
+DATA_DIR = Path(os.environ.get("TRADINGOS_DATA_DIR", "data/historical")).resolve()
 DEMO_DATASET = "BTCUSDT_1h.parquet"
 
 app = FastAPI(title="Trading OS API", version="0.1.0")
