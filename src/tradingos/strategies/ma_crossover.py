@@ -5,6 +5,7 @@ import pandas as pd
 from tradingos.core.indicators import atr, ema
 from tradingos.core.strategy import PositionSizing, Strategy, StrategyConfig, StrategyContext, register_strategy
 from tradingos.core.types import Side, Signal, SignalAction
+from tradingos.optimize.grid import ParameterGrid
 
 
 def default_config(symbol: str = "BTCUSDT", timeframe: str = "1h") -> StrategyConfig:
@@ -22,6 +23,15 @@ def default_config(symbol: str = "BTCUSDT", timeframe: str = "1h") -> StrategyCo
             "atr": {"period": 14, "min_value_pct": 0.001},
         },
     )
+
+
+def example_grid() -> ParameterGrid:
+    """Grilla de ejemplo para el Optimizador: varía las EMAs y el stop loss."""
+    return {
+        "indicators.ema_fast.period": [8, 12, 16],
+        "indicators.ema_slow.period": [21, 26, 34],
+        "stop_loss_pct": [0.015, 0.02, 0.03],
+    }
 
 
 @register_strategy("ma_crossover")
