@@ -22,7 +22,7 @@ export interface LiveBacktest {
   equityCurve: EquityPoint[];
 }
 
-const API_BASE_URL = process.env.API_BASE_URL ?? "https://tradingos-production.up.railway.app";
+export const API_BASE_URL = process.env.API_BASE_URL ?? "https://tradingos-production.up.railway.app";
 
 // Backtest fijo (ma_crossover sobre BTCUSDT 1h) servido por GET /backtests/demo.
 // Se cachea 5 minutos: es un resultado histórico, no cambia seguido. Si la API no
