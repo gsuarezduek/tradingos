@@ -63,8 +63,8 @@ def test_optimize_demo_returns_ranked_results():
     response = client.get("/optimize/demo")
     assert response.status_code == 200
     body = response.json()
-    assert body["total_combinations"] == 27  # 3 * 3 * 3, ver example_grid()
-    assert len(body["results"]) == 10
+    assert body["total_combinations"] == 2  # ver _DEMO_GRID en api/main.py
+    assert len(body["results"]) == 2
     scores = [r["metrics"]["profit_factor"] for r in body["results"]]
     assert scores == sorted(scores, reverse=True)
 

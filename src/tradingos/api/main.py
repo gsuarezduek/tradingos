@@ -13,7 +13,7 @@ from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list
 from tradingos.data.loader import load_ohlcv
 from tradingos.optimize.grid import ParameterGrid, combination_count
 from tradingos.optimize.optimizer import OptimizationResult, run_grid_search
-from tradingos.strategies.ma_crossover import default_config, example_grid
+from tradingos.strategies.ma_crossover import default_config
 
 # No se puede derivar de __file__: bajo una instalación no editable (como en la imagen
 # Docker) el paquete vive en site-packages, desconectado del checkout del repo. Se
@@ -21,7 +21,21 @@ from tradingos.strategies.ma_crossover import default_config, example_grid
 # el WORKDIR del contenedor), con override explícito disponible para otros layouts.
 DATA_DIR = Path(os.environ.get("TRADINGOS_DATA_DIR", "data/historical")).resolve()
 DEMO_DATASET = "BTCUSDT_1h.parquet"
-MAX_GRID_COMBINATIONS = 200
+
+# Medido en producción: ~8s por backtest completo sobre BTCUSDT_1h (~5x más lento que
+# en desarrollo local). El servidor corre un solo proceso/worker, así que un request
+# que tarda mucho no solo hace esperar a quien lo pidió: bloquea al resto del tráfico
+# mientras corre (lo vimos en vivo: /optimize/demo con 27 combinaciones dejó
+# /backtests/demo sin responder varios minutos). El tope existe para proteger la
+# disponibilidad del servicio, no solo para evitar un timeout del lado del cliente.
+MAX_GRID_COMBINATIONS = 12
+
+# Grilla deliberadamente chica para el endpoint público /optimize/demo — a ~8s por
+# combinación, 2 ya son ~16s. example_grid() (más grande, pensada para explorar desde
+# el script CLI, que no tiene un proxy HTTP con timeout de por medio) no es apta acá.
+_DEMO_GRID: ParameterGrid = {
+    "indicators.ema_fast.period": [8, 12],
+}
 
 app = FastAPI(title="Trading OS API", version="0.1.0")
 
@@ -125,12 +139,13 @@ def optimize(request: OptimizeRequest) -> dict:
 
 @app.get("/optimize/demo")
 def optimize_demo() -> dict:
-    """Grid search fijo (example_grid() de ma_crossover sobre BTCUSDT 1h), mismo
-    espíritu que /backtests/demo: no requiere que el cliente arme el request completo."""
+    """Grid search fijo y chico (ma_crossover sobre BTCUSDT 1h), mismo espíritu que
+    /backtests/demo: no requiere que el cliente arme el request completo, y usa
+    _DEMO_GRID (no example_grid()) para que la respuesta sea rápida en cualquier
+    entorno."""
     dataset_path = DATA_DIR / DEMO_DATASET
     strategy_cls = get_strategy("ma_crossover")
-    grid = example_grid()
 
     data = load_ohlcv(dataset_path)
-    results = run_grid_search(strategy_cls, default_config(), grid, data, initial_equity=10_000.0)
-    return _serialize_optimization(results, grid, top_n=10)
+    results = run_grid_search(strategy_cls, default_config(), _DEMO_GRID, data, initial_equity=10_000.0)
+    return _serialize_optimization(results, _DEMO_GRID, top_n=10)
