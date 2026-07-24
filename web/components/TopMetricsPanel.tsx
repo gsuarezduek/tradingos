@@ -1,13 +1,18 @@
 import { ArrowUpRight } from "lucide-react";
-import { summary, weeklyPnl } from "@/lib/dummy-data";
+import { DataBadge } from "@/components/DataBadge";
 
-function BarChart() {
-  const max = Math.max(...weeklyPnl.map((d) => d.value));
+interface ChartPoint {
+  label: string;
+  value: number;
+}
+
+function BarChart({ title, data }: { title: string; data: ChartPoint[] }) {
+  const max = Math.max(...data.map((d) => d.value));
   return (
     <div>
-      <div className="text-sm font-semibold text-ink">PnL semanal</div>
+      <div className="text-sm font-semibold text-ink">{title}</div>
       <div className="mt-4 flex h-32 gap-3">
-        {weeklyPnl.map((d) => (
+        {data.map((d) => (
           <div key={d.label} className="flex flex-1 flex-col items-center gap-2">
             <div className="flex h-24 w-full items-end">
               <div
@@ -26,7 +31,7 @@ function BarChart() {
 function RadialGauge({ percent, label }: { percent: number; label: string }) {
   const radius = 80;
   const circumference = Math.PI * radius;
-  const filled = (percent / 100) * circumference;
+  const filled = (Math.max(0, Math.min(100, percent)) / 100) * circumference;
 
   return (
     <div className="flex flex-col items-center">
@@ -52,7 +57,7 @@ function RadialGauge({ percent, label }: { percent: number; label: string }) {
           textAnchor="middle"
           className="fill-ink text-3xl font-bold"
         >
-          {percent}%
+          {Math.round(percent)}%
         </text>
       </svg>
       <span className="-mt-2 text-sm text-muted">{label}</span>
@@ -60,13 +65,7 @@ function RadialGauge({ percent, label }: { percent: number; label: string }) {
   );
 }
 
-function StatBlock({
-  value,
-  label,
-}: {
-  value: string;
-  label: string;
-}) {
+function StatBlock({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex flex-col justify-between">
       <div className="flex items-center gap-2">
@@ -80,19 +79,36 @@ function StatBlock({
   );
 }
 
-export function TopMetricsPanel() {
+interface TopMetricsPanelProps {
+  chartTitle: string;
+  chartData: ChartPoint[];
+  winRatePct: number;
+  capitalActual: number;
+  statLabel: string;
+  statValue: string;
+  live: boolean;
+}
+
+export function TopMetricsPanel({
+  chartTitle,
+  chartData,
+  winRatePct,
+  capitalActual,
+  statLabel,
+  statValue,
+  live,
+}: TopMetricsPanelProps) {
   return (
-    <div className="grid grid-cols-1 gap-8 rounded-3xl bg-panel p-8 md:grid-cols-[1.4fr_1fr_0.8fr_0.8fr] md:items-center">
-      <BarChart />
-      <RadialGauge percent={summary.winRatePct} label="Win rate" />
-      <StatBlock
-        value={`$${summary.capitalActual.toLocaleString("es-AR")}`}
-        label="Capital actual"
-      />
-      <StatBlock
-        value={String(summary.operacionesAbiertas)}
-        label="Operaciones abiertas"
-      />
+    <div className="relative rounded-3xl bg-panel p-8">
+      <div className="absolute right-8 top-8">
+        <DataBadge live={live} />
+      </div>
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-[1.4fr_1fr_0.8fr_0.8fr] md:items-center">
+        <BarChart title={chartTitle} data={chartData} />
+        <RadialGauge percent={winRatePct} label="Win rate" />
+        <StatBlock value={`$${capitalActual.toLocaleString("es-AR")}`} label="Capital actual" />
+        <StatBlock value={statValue} label={statLabel} />
+      </div>
     </div>
   );
 }

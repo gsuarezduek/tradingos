@@ -1,5 +1,5 @@
 import { ArrowUpDown, Calendar, TrendingDown, TrendingUp } from "lucide-react";
-import { strategies, strategyColumns, type DummyStrategy } from "@/lib/dummy-data";
+import { strategyColumns, type DummyStrategy } from "@/lib/dummy-data";
 
 function StrategyCard({ strategy }: { strategy: DummyStrategy }) {
   return (
@@ -29,7 +29,7 @@ function StrategyCard({ strategy }: { strategy: DummyStrategy }) {
   );
 }
 
-export function StrategyBoard() {
+export function StrategyBoard({ strategies }: { strategies: DummyStrategy[] }) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
       {strategyColumns.map((column) => {
