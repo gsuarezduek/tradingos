@@ -37,6 +37,8 @@ class BrokerConnection(Base):
     # Cifrados con Fernet (ver db/crypto.py); nunca se guarda el plaintext.
     api_key_encrypted: Mapped[str] = mapped_column(Text)
     api_secret_encrypted: Mapped[str] = mapped_column(Text)
+    # Solo la usan exchanges que la requieren (ej. Bitget); null para el resto.
+    passphrase_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="broker_connections")

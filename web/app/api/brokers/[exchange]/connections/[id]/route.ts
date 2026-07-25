@@ -1,12 +1,12 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
 
-export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
+export async function DELETE(request: Request, ctx: { params: Promise<{ exchange: string; id: string }> }) {
+  const { exchange, id } = await ctx.params;
   const token = await getSessionToken();
   if (!token) return Response.json({ detail: "no autenticado" }, { status: 401 });
 
-  const response = await fetch(`${API_BASE_URL}/brokers/binance/connections/${id}`, {
+  const response = await fetch(`${API_BASE_URL}/brokers/${exchange}/connections/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10000),

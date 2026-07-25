@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { DataBadge } from "@/components/DataBadge";
+import { EXCHANGES } from "@/lib/exchanges";
 
 interface SpotBalance {
   asset: string;
@@ -23,15 +24,22 @@ interface SectionResult<T> {
   error?: string;
 }
 
-interface BinanceBalancesResponse {
+interface ExchangeBalancesResponse {
   spot: SectionResult<SpotBalance>;
-  futures_usdm: SectionResult<FuturesBalance>;
+  // Solo Binance soporta Futuros por ahora (ver InfoGuide/plan): ausente para el
+  // resto, no un objeto vacío, así el panel sabe si tiene que mostrar la columna.
+  futures_usdm?: SectionResult<FuturesBalance>;
 }
 
 export interface Connection {
   id: number;
+  exchange: string;
   label: string;
   created_at: string;
+}
+
+function exchangeLabel(value: string): string {
+  return EXCHANGES.find((e) => e.value === value)?.label ?? value;
 }
 
 function TextField({
@@ -62,7 +70,7 @@ function TextField({
   );
 }
 
-function BalancesPanel({ result }: { result: BinanceBalancesResponse }) {
+function BalancesPanel({ result }: { result: ExchangeBalancesResponse }) {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div>
@@ -102,46 +110,48 @@ function BalancesPanel({ result }: { result: BinanceBalancesResponse }) {
         )}
       </div>
 
-      <div>
-        <h3 className="text-sm font-bold text-ink">Futuros (USD-M)</h3>
-        {!result.futures_usdm.ok && (
-          <p className="mt-3 text-sm text-muted">
-            <span className="font-semibold text-ink">No disponible: </span>
-            {result.futures_usdm.error}
-          </p>
-        )}
-        {result.futures_usdm.ok && result.futures_usdm.balances && result.futures_usdm.balances.length === 0 && (
-          <p className="mt-3 text-sm text-muted">No hay saldos con balance mayor a cero.</p>
-        )}
-        {result.futures_usdm.ok && result.futures_usdm.balances && result.futures_usdm.balances.length > 0 && (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
-                  <th className="pb-2 pr-4 font-medium">Activo</th>
-                  <th className="pb-2 pr-4 font-medium">Balance</th>
-                  <th className="pb-2 pr-4 font-medium">Disponible</th>
-                  <th className="pb-2 font-medium">PnL no realizado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.futures_usdm.balances.map((b) => (
-                  <tr key={b.asset} className="border-b border-border last:border-0">
-                    <td className="py-2 pr-4 font-semibold text-ink">{b.asset}</td>
-                    <td className="py-2 pr-4 text-ink">{b.balance.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
-                    <td className="py-2 pr-4 text-ink">
-                      {b.available_balance.toLocaleString("es-AR", { maximumFractionDigits: 8 })}
-                    </td>
-                    <td className={`py-2 ${b.cross_unrealized_pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                      {b.cross_unrealized_pnl.toLocaleString("es-AR", { maximumFractionDigits: 8 })}
-                    </td>
+      {result.futures_usdm && (
+        <div>
+          <h3 className="text-sm font-bold text-ink">Futuros (USD-M)</h3>
+          {!result.futures_usdm.ok && (
+            <p className="mt-3 text-sm text-muted">
+              <span className="font-semibold text-ink">No disponible: </span>
+              {result.futures_usdm.error}
+            </p>
+          )}
+          {result.futures_usdm.ok && result.futures_usdm.balances && result.futures_usdm.balances.length === 0 && (
+            <p className="mt-3 text-sm text-muted">No hay saldos con balance mayor a cero.</p>
+          )}
+          {result.futures_usdm.ok && result.futures_usdm.balances && result.futures_usdm.balances.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
+                    <th className="pb-2 pr-4 font-medium">Activo</th>
+                    <th className="pb-2 pr-4 font-medium">Balance</th>
+                    <th className="pb-2 pr-4 font-medium">Disponible</th>
+                    <th className="pb-2 font-medium">PnL no realizado</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                </thead>
+                <tbody>
+                  {result.futures_usdm.balances.map((b) => (
+                    <tr key={b.asset} className="border-b border-border last:border-0">
+                      <td className="py-2 pr-4 font-semibold text-ink">{b.asset}</td>
+                      <td className="py-2 pr-4 text-ink">{b.balance.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
+                      <td className="py-2 pr-4 text-ink">
+                        {b.available_balance.toLocaleString("es-AR", { maximumFractionDigits: 8 })}
+                      </td>
+                      <td className={`py-2 ${b.cross_unrealized_pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {b.cross_unrealized_pnl.toLocaleString("es-AR", { maximumFractionDigits: 8 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -156,26 +166,33 @@ export function ConexionesClient({
   const [connections, setConnections] = useState<Connection[]>(initialConnections);
   const [loadError, setLoadError] = useState<string | null>(initialError);
 
-  const [label, setLabel] = useState("Binance");
+  const [exchange, setExchange] = useState(EXCHANGES[0].value);
+  const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
+  const [passphrase, setPassphrase] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [balancesById, setBalancesById] = useState<Record<number, BinanceBalancesResponse>>({});
+  const [balancesById, setBalancesById] = useState<Record<number, ExchangeBalancesResponse>>({});
   const [balancesLoadingId, setBalancesLoadingId] = useState<number | null>(null);
   const [balancesErrorById, setBalancesErrorById] = useState<Record<number, string>>({});
 
+  const requiresPassphrase = EXCHANGES.find((e) => e.value === exchange)?.requiresPassphrase ?? false;
+
   async function reloadConnections() {
     try {
-      const response = await fetch("/api/brokers/binance/connections");
-      const data = await response.json();
-      if (!response.ok) {
-        setLoadError(typeof data.detail === "string" ? data.detail : "No se pudieron cargar tus conexiones.");
+      const responses = await Promise.all(EXCHANGES.map((e) => fetch(`/api/brokers/${e.value}/connections`)));
+      const bodies = await Promise.all(responses.map((r) => r.json()));
+      const failedIndex = responses.findIndex((r) => !r.ok);
+      if (failedIndex !== -1) {
+        setLoadError(typeof bodies[failedIndex].detail === "string" ? bodies[failedIndex].detail : "No se pudieron cargar tus conexiones.");
         return;
       }
-      setConnections(data);
+      const merged = (bodies as Connection[][]).flat();
+      merged.sort((a, b) => a.created_at.localeCompare(b.created_at));
+      setConnections(merged);
       setLoadError(null);
     } catch {
       setLoadError("No se pudo conectar con la API.");
@@ -187,10 +204,10 @@ export function ConexionesClient({
     setSaveError(null);
 
     try {
-      const response = await fetch("/api/brokers/binance/connections", {
+      const response = await fetch(`/api/brokers/${exchange}/connections`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, label }),
+        body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, passphrase: passphrase || undefined, label }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -200,7 +217,8 @@ export function ConexionesClient({
 
       setApiKey("");
       setApiSecret("");
-      setLabel("Binance");
+      setPassphrase("");
+      setLabel("");
       await reloadConnections();
     } catch {
       setSaveError("No se pudo conectar con la API. Probá de nuevo.");
@@ -209,37 +227,37 @@ export function ConexionesClient({
     }
   }
 
-  async function deleteConnection(id: number) {
+  async function deleteConnection(connection: Connection) {
     if (!confirm("¿Eliminar esta conexión?")) return;
 
-    await fetch(`/api/brokers/binance/connections/${id}`, { method: "DELETE" });
-    if (expandedId === id) setExpandedId(null);
+    await fetch(`/api/brokers/${connection.exchange}/connections/${connection.id}`, { method: "DELETE" });
+    if (expandedId === connection.id) setExpandedId(null);
     await reloadConnections();
   }
 
-  async function toggleBalances(id: number) {
-    if (expandedId === id) {
+  async function toggleBalances(connection: Connection) {
+    if (expandedId === connection.id) {
       setExpandedId(null);
       return;
     }
 
-    setExpandedId(id);
-    if (balancesById[id]) return;
+    setExpandedId(connection.id);
+    if (balancesById[connection.id]) return;
 
-    setBalancesLoadingId(id);
+    setBalancesLoadingId(connection.id);
     try {
-      const response = await fetch(`/api/brokers/binance/connections/${id}/balances`);
+      const response = await fetch(`/api/brokers/${connection.exchange}/connections/${connection.id}/balances`);
       const data = await response.json();
       if (!response.ok) {
         setBalancesErrorById((prev) => ({
           ...prev,
-          [id]: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los saldos.",
+          [connection.id]: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los saldos.",
         }));
         return;
       }
-      setBalancesById((prev) => ({ ...prev, [id]: data }));
+      setBalancesById((prev) => ({ ...prev, [connection.id]: data }));
     } catch {
-      setBalancesErrorById((prev) => ({ ...prev, [id]: "No se pudo conectar con la API." }));
+      setBalancesErrorById((prev) => ({ ...prev, [connection.id]: "No se pudo conectar con la API." }));
     } finally {
       setBalancesLoadingId(null);
     }
@@ -250,7 +268,7 @@ export function ConexionesClient({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink">Conexión con Exchanges</h1>
-          <p className="text-sm text-muted">Guardá tus conexiones de Binance y consultá saldos cuando quieras</p>
+          <p className="text-sm text-muted">Guardá tus conexiones y consultá saldos cuando quieras</p>
         </div>
         <DataBadge live={connections.length > 0} label={connections.length > 0 ? "Cuentas conectadas" : "Sin conexiones"} />
       </div>
@@ -264,20 +282,37 @@ export function ConexionesClient({
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <TextField label="Nombre" value={label} onChange={setLabel} placeholder="Ej: Cuenta principal" />
-          <TextField label="API Key" value={apiKey} onChange={setApiKey} placeholder="Tu API key de Binance" />
-          <TextField
-            label="API Secret"
-            value={apiSecret}
-            onChange={setApiSecret}
-            type="password"
-            placeholder="Tu API secret de Binance"
-          />
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Exchange</span>
+            <select
+              value={exchange}
+              onChange={(e) => setExchange(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            >
+              {EXCHANGES.map((e) => (
+                <option key={e.value} value={e.value}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <TextField label="Nombre (opcional)" value={label} onChange={setLabel} placeholder="Ej: Cuenta principal" />
+          <TextField label="API Key" value={apiKey} onChange={setApiKey} placeholder="Tu API key" />
+          <TextField label="API Secret" value={apiSecret} onChange={setApiSecret} type="password" placeholder="Tu API secret" />
+          {requiresPassphrase && (
+            <TextField
+              label="Passphrase"
+              value={passphrase}
+              onChange={setPassphrase}
+              type="password"
+              placeholder="Passphrase de tu API key"
+            />
+          )}
         </div>
 
         <button
           onClick={createConnection}
-          disabled={saving || !apiKey || !apiSecret}
+          disabled={saving || !apiKey || !apiSecret || (requiresPassphrase && !passphrase)}
           className="mt-6 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           {saving ? "Conectando…" : "Conectar y guardar"}
@@ -307,23 +342,28 @@ export function ConexionesClient({
       {connections.length > 0 && (
         <div className="flex flex-col gap-4">
           {connections.map((connection) => (
-            <div key={connection.id} className="rounded-3xl bg-panel p-8">
+            <div key={`${connection.exchange}-${connection.id}`} className="rounded-3xl bg-panel p-8">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="font-bold text-ink">{connection.label}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-ink">{connection.label}</h3>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted">
+                      {exchangeLabel(connection.exchange)}
+                    </span>
+                  </div>
                   <p className="text-xs text-muted">
                     Conectada el {new Date(connection.created_at).toLocaleDateString("es-AR")}
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => toggleBalances(connection.id)}
+                    onClick={() => toggleBalances(connection)}
                     className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-ink"
                   >
                     {expandedId === connection.id ? "Ocultar saldos" : "Ver saldos"}
                   </button>
                   <button
-                    onClick={() => deleteConnection(connection.id)}
+                    onClick={() => deleteConnection(connection)}
                     className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted"
                   >
                     Eliminar

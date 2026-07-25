@@ -194,3 +194,118 @@ def test_connection_balances_for_missing_connection_returns_404():
     token = _register_and_get_token("j@example.com")
     response = client.get("/brokers/binance/connections/999/balances", headers=_auth_headers(token))
     assert response.status_code == 404
+
+
+def test_unsupported_exchange_returns_404():
+    response = client.post("/brokers/kraken/balances", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 404
+
+
+def test_mexc_test_balances_returns_ok_section_without_saving(monkeypatch):
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.mexc_get_spot_balances",
+        lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
+    )
+    response = client.post("/brokers/mexc/balances", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"] == {"ok": True, "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]}
+    assert "futures_usdm" not in body
+
+    db = SessionLocal()
+    try:
+        assert db.query(BrokerConnection).count() == 0
+    finally:
+        db.close()
+
+
+def test_mexc_create_connection_persists_with_exchange_field(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.mexc_get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("mexc-user@example.com")
+
+    response = client.post(
+        "/brokers/mexc/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "Mi cuenta MEXC"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exchange"] == "mexc"
+    assert body["label"] == "Mi cuenta MEXC"
+
+
+def test_mexc_connections_are_isolated_from_binance_connections(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.mexc_get_spot_balances", lambda api_key, api_secret: [])
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("multi-exchange@example.com")
+
+    client.post("/brokers/mexc/connections", json={"api_key": "k", "api_secret": "s"}, headers=_auth_headers(token))
+    client.post("/brokers/binance/connections", json={"api_key": "k", "api_secret": "s"}, headers=_auth_headers(token))
+
+    mexc_connections = client.get("/brokers/mexc/connections", headers=_auth_headers(token)).json()
+    binance_connections = client.get("/brokers/binance/connections", headers=_auth_headers(token)).json()
+
+    assert len(mexc_connections) == 1
+    assert len(binance_connections) == 1
+    assert mexc_connections[0]["exchange"] == "mexc"
+    assert binance_connections[0]["exchange"] == "binance"
+
+
+def test_bitget_requires_passphrase_to_create_connection(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_balances", lambda api_key, api_secret, passphrase: [])
+    token = _register_and_get_token("bitget-nopass@example.com")
+
+    response = client.post(
+        "/brokers/bitget/connections",
+        json={"api_key": "k", "api_secret": "s"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+
+
+def test_bitget_create_connection_persists_encrypted_passphrase(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_balances", lambda api_key, api_secret, passphrase: [])
+    token = _register_and_get_token("bitget-user@example.com")
+
+    response = client.post(
+        "/brokers/bitget/connections",
+        json={"api_key": "k", "api_secret": "s", "passphrase": "my-real-passphrase", "label": "Bitget"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exchange"] == "bitget"
+
+    db = SessionLocal()
+    try:
+        connection = db.query(BrokerConnection).filter(BrokerConnection.exchange == "bitget").one()
+        assert connection.passphrase_encrypted is not None
+        assert connection.passphrase_encrypted != "my-real-passphrase"
+    finally:
+        db.close()
+
+
+def test_bitget_connection_balances_decrypts_passphrase(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_balances", lambda api_key, api_secret, passphrase: [])
+    token = _register_and_get_token("bitget-balances@example.com")
+
+    created = client.post(
+        "/brokers/bitget/connections",
+        json={"api_key": "real-key", "api_secret": "real-secret", "passphrase": "real-pass", "label": "Saldos"},
+        headers=_auth_headers(token),
+    )
+    connection_id = created.json()["id"]
+
+    seen_credentials = []
+
+    def _fake_spot(api_key, api_secret, passphrase):
+        seen_credentials.append((api_key, api_secret, passphrase))
+        return [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]
+
+    monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_balances", _fake_spot)
+
+    response = client.get(f"/brokers/bitget/connections/{connection_id}/balances", headers=_auth_headers(token))
+    assert response.status_code == 200
+    assert response.json()["spot"]["ok"] is True
+    assert "futures_usdm" not in response.json()
+    assert seen_credentials == [("real-key", "real-secret", "real-pass")]
