@@ -16,8 +16,7 @@ from tradingos.backtest.engine import BacktestEngine
 from tradingos.backtest.result import BacktestResult
 from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list_strategies
 from tradingos.data.loader import load_ohlcv
-from tradingos.db.models import Base
-from tradingos.db.session import engine
+from tradingos.db.migrate import run_migrations
 from tradingos.montecarlo.simulator import MonteCarloResult, run_monte_carlo
 from tradingos.optimize.grid import ParameterGrid, combination_count
 from tradingos.optimize.optimizer import OptimizationResult, run_grid_search
@@ -54,9 +53,7 @@ MAX_MONTE_CARLO_SIMULATIONS = 5000
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Sin Alembic todavía: el schema es nuevo y create_all es idempotente. El día que
-    # haga falta una migración real (no solo crear tablas que no existen), se introduce.
-    Base.metadata.create_all(bind=engine)
+    run_migrations()
     yield
 
 

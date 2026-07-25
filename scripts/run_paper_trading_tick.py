@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from tradingos.db.models import Base
-from tradingos.db.session import SessionLocal, engine
+from tradingos.db.migrate import run_migrations
+from tradingos.db.session import SessionLocal
 from tradingos.paper_trading.tick import run_all_active
 
 
 def main() -> None:
-    Base.metadata.create_all(bind=engine)  # idempotente, mismo criterio que api/main.py
+    run_migrations()
 
     db = SessionLocal()
     try:
