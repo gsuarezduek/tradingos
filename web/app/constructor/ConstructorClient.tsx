@@ -1,10 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
 import type { LiveBacktestMetrics } from "@/lib/api";
+
+// Pares más operados como sugerencia inicial (antes de escribir); mismo criterio que el
+// combobox de símbolo de Paper Trading.
+const POPULAR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC", "BNBETH"];
+const MAX_SUGGESTIONS = 30;
+
+// Temporalidades ofrecidas en el formulario. El motor sabe anualizar métricas para
+// todas estas (ver SUPPORTED_TIMEFRAMES en backtest/engine.py) — que aparezcan acá no
+// implica que ya exista un dataset real para correr un backtest en esa temporalidad.
+const TIMEFRAME_OPTIONS = ["3m", "5m", "30m", "1h", "4h", "1d", "1w"];
 
 export interface DatasetOption {
   symbol: string;
@@ -121,13 +131,13 @@ function CheckboxGroup({
   options,
   selected,
   onChange,
-  emptyHint,
+  emptyHint = "",
 }: {
   label: string;
   options: string[];
   selected: string[];
   onChange: (values: string[]) => void;
-  emptyHint: string;
+  emptyHint?: string;
 }) {
   function toggle(value: string) {
     onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
@@ -151,6 +161,99 @@ function CheckboxGroup({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function MultiSymbolCombobox({
+  label,
+  selected,
+  symbols,
+  onChange,
+}: {
+  label: string;
+  selected: string[];
+  symbols: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const normalizedQuery = query.trim().toUpperCase();
+  const suggestions = (
+    normalizedQuery ? symbols.filter((s) => s.includes(normalizedQuery)) : POPULAR_SYMBOLS.filter((s) => symbols.length === 0 || symbols.includes(s))
+  )
+    .filter((s) => !selected.includes(s))
+    .slice(0, MAX_SUGGESTIONS);
+
+  function addSymbol(symbol: string) {
+    if (!selected.includes(symbol)) onChange([...selected, symbol]);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function removeSymbol(symbol: string) {
+    onChange(selected.filter((s) => s !== symbol));
+  }
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted">{label}</span>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {selected.map((s) => (
+            <button
+              type="button"
+              key={s}
+              onClick={() => removeSymbol(s)}
+              className="rounded-lg border border-ink bg-ink px-3 py-1.5 text-xs font-semibold text-white"
+            >
+              {s} ✕
+            </button>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setQuery(e.target.value.toUpperCase());
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && normalizedQuery) {
+            e.preventDefault();
+            addSymbol(normalizedQuery);
+          }
+        }}
+        placeholder="Agregar par, ej: ETHUSDT"
+        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+      />
+      {open && suggestions.length > 0 && (
+        <ul className="absolute top-full z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+          {suggestions.map((s) => (
+            <li key={s}>
+              <button
+                type="button"
+                onClick={() => addSymbol(s)}
+                className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-panel"
+              >
+                {s}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -190,11 +293,13 @@ export function ConstructorClient({
   initialError,
   catalog,
   datasets,
+  symbols,
 }: {
   initialStrategies: SavedStrategySummary[];
   initialError: string | null;
   catalog: string[];
   datasets: DatasetOption[];
+  symbols: string[];
 }) {
   const [strategies, setStrategies] = useState<SavedStrategySummary[]>(initialStrategies);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -203,9 +308,6 @@ export function ConstructorClient({
   const [showForm, setShowForm] = useState(initialStrategies.length === 0);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-
-  const availableSymbols = useMemo(() => Array.from(new Set(datasets.map((d) => d.symbol))), [datasets]);
-  const availableTimeframes = useMemo(() => Array.from(new Set(datasets.map((d) => d.timeframe))), [datasets]);
 
   // El primer combo símbolo+timeframe elegido que efectivamente tiene dataset: es lo
   // que se usa para correr el primer backtest al guardar. Si no hay ninguno, no
@@ -289,8 +391,10 @@ export function ConstructorClient({
               documentan qué hace, no la ejecutan.
               <br />
               <br />
-              Los mercados/temporalidades solo pueden ser combinaciones para las que existe un dataset real
-              cargado en el servidor — hoy eso limita bastante las opciones, van a ir creciendo.
+              El campo Mercados autocompleta contra la lista real de pares spot de Binance (igual que en
+              Paper Trading) — declará ahí todos los que la estrategia podría operar. Eso sí, correr un
+              backtest real todavía requiere que exista un dataset cargado para ese símbolo+timeframe
+              puntual; si elegís una combinación sin dataset, te avisamos antes de guardar.
             </InfoGuide>
           </h1>
           <p className="text-sm text-muted">Guardá estrategias y corré backtests reales con historial</p>
@@ -348,19 +452,17 @@ export function ConstructorClient({
             </label>
             <Field label="Equity inicial ($)" value={form.initialEquity} step="100" min="100" onChange={(v) => update("initialEquity", v)} />
 
-            <CheckboxGroup
+            <MultiSymbolCombobox
               label="Mercados"
-              options={availableSymbols}
+              symbols={symbols}
               selected={form.symbols}
               onChange={(v) => update("symbols", v)}
-              emptyHint="no hay datasets disponibles todavía"
             />
             <CheckboxGroup
               label="Temporalidades compatibles"
-              options={availableTimeframes}
+              options={TIMEFRAME_OPTIONS}
               selected={form.timeframes}
               onChange={(v) => update("timeframes", v)}
-              emptyHint="no hay datasets disponibles todavía"
             />
           </div>
 

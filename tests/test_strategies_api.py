@@ -85,6 +85,26 @@ def test_create_strategy_rejects_invalid_category():
     assert response.status_code == 422
 
 
+def test_create_strategy_accepts_new_extended_timeframes():
+    token = _register_and_get_token("timeframes-nuevas@example.com")
+    # "1w" es solo metadata declarativa (sin dataset todavía); el primer backtest corre
+    # igual en "1h" porque config.timeframe sigue siendo esa.
+    payload = _create_payload(timeframes=["1h", "1w"])
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    assert response.json()["timeframes"] == ["1h", "1w"]
+
+
+def test_create_strategy_rejects_unsupported_timeframe():
+    token = _register_and_get_token("timeframe-invalida@example.com")
+    payload = _create_payload(timeframes=["2h"])
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 400
+    assert "2h" in response.json()["detail"]
+
+
 def test_list_and_detail_isolated_by_user():
     token_a = _register_and_get_token("usera@example.com")
     token_b = _register_and_get_token("userb@example.com")

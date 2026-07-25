@@ -53,13 +53,40 @@ async function fetchDatasets(): Promise<DatasetOption[]> {
   }
 }
 
+// Lista de símbolos de Binance para el autocomplete de mercados; mismo endpoint que ya
+// usa Paper Trading. Si falla, el formulario sigue funcionando solo con los símbolos
+// que ya tienen dataset (no bloqueamos la creación de estrategias por esto).
+async function fetchSymbols(): Promise<string[]> {
+  const token = await getSessionToken();
+  if (!token) return [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/paper-trading/symbols`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function ConstructorPage() {
-  const [{ strategies, error }, catalog, datasets] = await Promise.all([
+  const [{ strategies, error }, catalog, datasets, symbols] = await Promise.all([
     fetchStrategies(),
     fetchCatalog(),
     fetchDatasets(),
+    fetchSymbols(),
   ]);
   return (
-    <ConstructorClient initialStrategies={strategies} initialError={error} catalog={catalog} datasets={datasets} />
+    <ConstructorClient
+      initialStrategies={strategies}
+      initialError={error}
+      catalog={catalog}
+      datasets={datasets}
+      symbols={symbols}
+    />
   );
 }

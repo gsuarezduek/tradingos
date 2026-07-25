@@ -19,11 +19,14 @@ from tradingos.core.types import Position, Side, SignalAction, Trade
 
 _TIMEFRAME_PERIODS_PER_YEAR = {
     "1m": 365 * 24 * 60,
+    "3m": 365 * 24 * 20,
     "5m": 365 * 24 * 12,
     "15m": 365 * 24 * 4,
+    "30m": 365 * 24 * 2,
     "1h": 365 * 24,
     "4h": 365 * 6,
     "1d": 365,
+    "1w": 52,
 }
 
 # Timeframes para los que el motor sabe anualizar métricas (Sharpe/Sortino/CAGR).
