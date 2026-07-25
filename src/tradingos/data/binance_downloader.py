@@ -7,7 +7,11 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-BASE_URL = "https://api.binance.com/api/v3/klines"
+# data-api.binance.vision es el espejo público de solo-datos de mercado de Binance,
+# sin las restricciones geográficas (451) que aplica api.binance.com a IPs de ciertas
+# regiones (ej. los datacenters de Railway) — ver
+# https://github.com/binance/binance-spot-api-docs/blob/master/rest-api.md#public-rest-api-for-market-data
+BASE_URL = "https://data-api.binance.vision/api/v3/klines"
 MAX_LIMIT = 1000
 
 # ms por intervalo, para paginar sin depender de que Binance devuelva el batch completo
