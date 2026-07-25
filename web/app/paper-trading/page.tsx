@@ -25,7 +25,26 @@ async function fetchSessions(): Promise<{ sessions: SessionSummary[]; error: str
   }
 }
 
+// Lista de símbolos de Binance para el autocomplete; si falla, el formulario sigue
+// funcionando con texto libre (no bloqueamos la creación de sesiones por esto).
+async function fetchSymbols(): Promise<string[]> {
+  const token = await getSessionToken();
+  if (!token) return [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/paper-trading/symbols`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function PaperTradingPage() {
-  const { sessions, error } = await fetchSessions();
-  return <PaperTradingClient initialSessions={sessions} initialError={error} />;
+  const [{ sessions, error }, symbols] = await Promise.all([fetchSessions(), fetchSymbols()]);
+  return <PaperTradingClient initialSessions={sessions} initialError={error} symbols={symbols} />;
 }

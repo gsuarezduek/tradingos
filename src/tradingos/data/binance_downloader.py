@@ -12,6 +12,7 @@ import requests
 # regiones (ej. los datacenters de Railway) — ver
 # https://github.com/binance/binance-spot-api-docs/blob/master/rest-api.md#public-rest-api-for-market-data
 BASE_URL = "https://data-api.binance.vision/api/v3/klines"
+EXCHANGE_INFO_URL = "https://data-api.binance.vision/api/v3/exchangeInfo"
 MAX_LIMIT = 1000
 
 # ms por intervalo, para paginar sin depender de que Binance devuelva el batch completo
@@ -95,6 +96,18 @@ def fetch_klines(symbol: str, interval: str, start: datetime, end: datetime | No
     )
     df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
     return df
+
+
+def fetch_spot_symbols() -> list[str]:
+    """Lista de símbolos spot activos y operables en Binance (ej. BTCUSDT, ETHBTC)."""
+    response = requests.get(EXCHANGE_INFO_URL, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    return sorted(
+        s["symbol"]
+        for s in data["symbols"]
+        if s.get("status") == "TRADING" and s.get("isSpotTradingAllowed", True)
+    )
 
 
 def download_and_save(symbol: str, interval: str, start: datetime, out_dir: str | Path, end: datetime | None = None) -> Path:

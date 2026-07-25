@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from tradingos.api.main import app
+from tradingos.api.routers import paper_trading as paper_trading_router
 from tradingos.db.models import PaperTradingSession
 from tradingos.db.session import SessionLocal
 from tradingos.strategies.ma_crossover import default_config
@@ -23,6 +24,32 @@ def _create_payload(symbol: str = "BTCUSDT") -> dict:
 
 def _mock_tick_ok(monkeypatch):
     monkeypatch.setattr("tradingos.api.routers.paper_trading.run_tick_for_session", lambda db, session: None)
+
+
+def test_list_symbols_requires_auth():
+    response = client.get("/paper-trading/symbols")
+    assert response.status_code == 401
+
+
+def test_list_symbols_returns_cached_binance_symbols(monkeypatch):
+    calls = []
+
+    def _fake_fetch():
+        calls.append(1)
+        return ["BTCUSDT", "ETHUSDT", "ETHBTC"]
+
+    monkeypatch.setattr("tradingos.api.routers.paper_trading.fetch_spot_symbols", _fake_fetch)
+    monkeypatch.setitem(paper_trading_router._symbols_cache, "symbols", None)
+
+    token = _register_and_get_token("symbols@example.com")
+
+    first = client.get("/paper-trading/symbols", headers=_auth_headers(token))
+    second = client.get("/paper-trading/symbols", headers=_auth_headers(token))
+
+    assert first.status_code == 200
+    assert first.json() == ["BTCUSDT", "ETHUSDT", "ETHBTC"]
+    assert second.json() == ["BTCUSDT", "ETHUSDT", "ETHBTC"]
+    assert len(calls) == 1  # la segunda llamada usa el cache, no vuelve a pegarle a Binance
 
 
 def test_create_session_requires_auth():

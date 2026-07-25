@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
 from tradingos.core.strategy import StrategyConfig, get_strategy
+from tradingos.data.binance_downloader import fetch_spot_symbols
 from tradingos.db.models import PaperTrade, PaperTradingSession, User
 from tradingos.db.session import get_db
 from tradingos.paper_trading.tick import run_tick_for_session
@@ -17,6 +20,19 @@ router = APIRouter(prefix="/paper-trading", tags=["paper-trading"])
 # El cálculo de ventana en paper_trading/tick.py (LOOKBACK_BARS en horas) asume velas de
 # 1h; soportar otros timeframes implica ajustar ese cálculo primero.
 _SUPPORTED_TIMEFRAME = "1h"
+
+# La lista de símbolos de Binance (~2000+) cambia con muy poca frecuencia; cachearla
+# evita pegarle a Binance en cada tecla que el usuario tipea en el autocomplete.
+_SYMBOLS_CACHE_TTL_SECONDS = 3600
+_symbols_cache: dict[str, Any] = {"symbols": None, "fetched_at": 0.0}
+
+
+def _get_cached_symbols() -> list[str]:
+    now = time.time()
+    if _symbols_cache["symbols"] is None or now - _symbols_cache["fetched_at"] > _SYMBOLS_CACHE_TTL_SECONDS:
+        _symbols_cache["symbols"] = fetch_spot_symbols()
+        _symbols_cache["fetched_at"] = now
+    return _symbols_cache["symbols"]
 
 
 class CreateSessionRequest(BaseModel):
@@ -80,6 +96,14 @@ def _get_owned_session(session_id: int, user: User, db: Session) -> PaperTrading
     if session is None:
         raise HTTPException(status_code=404, detail="sesión no encontrada")
     return session
+
+
+@router.get("/symbols", response_model=list[str])
+def list_symbols(user: User = Depends(get_current_user)) -> list[str]:
+    try:
+        return _get_cached_symbols()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"no se pudo obtener la lista de símbolos de Binance: {exc}") from exc
 
 
 @router.post("/sessions", response_model=SessionResponse)

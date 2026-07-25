@@ -1,9 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
+
+// Pares más operados como sugerencia inicial (antes de escribir); se filtran contra la
+// lista real de Binance por si alguno dejara de estar disponible.
+const POPULAR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC", "BNBETH"];
+const MAX_SUGGESTIONS = 30;
 
 export interface SessionSummary {
   id: number;
@@ -88,6 +93,70 @@ function buildConfig(form: FormState) {
   };
 }
 
+function SymbolCombobox({
+  value,
+  symbols,
+  onChange,
+}: {
+  value: string;
+  symbols: string[];
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const query = value.trim().toUpperCase();
+  const suggestions = query
+    ? symbols.filter((s) => s.includes(query)).slice(0, MAX_SUGGESTIONS)
+    : POPULAR_SYMBOLS.filter((s) => symbols.length === 0 || symbols.includes(s));
+
+  const knownSymbol = symbols.length === 0 || symbols.includes(query);
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted">Símbolo</span>
+      <input
+        type="text"
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onChange(e.target.value.toUpperCase());
+          setOpen(true);
+        }}
+        placeholder="Ej: BTCUSDT"
+        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+      />
+      {!knownSymbol && <span className="text-xs text-red-600">no está en la lista de pares de Binance</span>}
+      {open && suggestions.length > 0 && (
+        <ul className="absolute top-full z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
+          {suggestions.map((s) => (
+            <li key={s}>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(s);
+                  setOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-panel"
+              >
+                {s}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const active = status === "active";
   return (
@@ -104,9 +173,11 @@ function StatusBadge({ status }: { status: string }) {
 export function PaperTradingClient({
   initialSessions,
   initialError,
+  symbols,
 }: {
   initialSessions: SessionSummary[];
   initialError: string | null;
+  symbols: string[];
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -158,6 +229,7 @@ export function PaperTradingClient({
   }
 
   const activeCount = sessions.filter((s) => s.status === "active").length;
+  const symbolValid = symbols.length === 0 || symbols.includes(form.symbol.trim().toUpperCase());
 
   return (
     <div className="flex flex-col gap-8">
@@ -170,6 +242,11 @@ export function PaperTradingClient({
               usar plata real. Cada sesión corre el motor de backtest cada 15 minutos (vía un servicio
               cron) sobre las últimas velas cerradas del símbolo elegido, y actualiza el equity, la
               posición abierta y las operaciones cerradas.
+              <br />
+              <br />
+              El campo Símbolo autocompleta contra la lista real de pares spot de Binance (empezá a
+              escribir, ej. &quot;BTC&quot;) — solo se pueden lanzar sesiones sobre pares que Binance
+              efectivamente opera.
               <br />
               <br />
               Podés tener varias sesiones corriendo en simultáneo: dale a &quot;+ Nueva sesión&quot; las
@@ -209,15 +286,7 @@ export function PaperTradingClient({
           <p className="mt-1 text-sm text-muted">EMA Crossover · 1h</p>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted">Símbolo</span>
-              <input
-                type="text"
-                value={form.symbol}
-                onChange={(e) => update("symbol", e.target.value.toUpperCase())}
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-              />
-            </label>
+            <SymbolCombobox value={form.symbol} symbols={symbols} onChange={(v) => update("symbol", v)} />
             <Field label="EMA rápida (períodos)" value={form.emaFastPeriod} step="1" min="1" onChange={(v) => update("emaFastPeriod", v)} />
             <Field label="EMA lenta (períodos)" value={form.emaSlowPeriod} step="1" min="1" onChange={(v) => update("emaSlowPeriod", v)} />
             <Field label="ATR (períodos)" value={form.atrPeriod} step="1" min="1" onChange={(v) => update("atrPeriod", v)} />
@@ -231,7 +300,7 @@ export function PaperTradingClient({
 
           <button
             onClick={createSession}
-            disabled={creating || !form.symbol}
+            disabled={creating || !form.symbol || !symbolValid}
             className="mt-6 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {creating ? "Iniciando…" : "Iniciar paper trading"}
