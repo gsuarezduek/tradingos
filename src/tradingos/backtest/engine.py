@@ -26,6 +26,9 @@ _TIMEFRAME_PERIODS_PER_YEAR = {
     "1d": 365,
 }
 
+# Timeframes para los que el motor sabe anualizar métricas (Sharpe/Sortino/CAGR).
+SUPPORTED_TIMEFRAMES = frozenset(_TIMEFRAME_PERIODS_PER_YEAR)
+
 _NON_INDICATOR_COLUMNS = {"timestamp", "open", "high", "low", "close", "volume"}
 
 

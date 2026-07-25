@@ -12,7 +12,7 @@ def test_health():
 
 
 def test_list_strategies_includes_ma_crossover():
-    response = client.get("/strategies")
+    response = client.get("/strategies/catalog")
     assert response.status_code == 200
     assert "ma_crossover" in response.json()
 

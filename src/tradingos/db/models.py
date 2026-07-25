@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -27,6 +27,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     paper_trading_sessions: Mapped[list["PaperTradingSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    saved_strategies: Mapped[list["SavedStrategy"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -88,3 +91,59 @@ class PaperTrade(Base):
     pnl: Mapped[float] = mapped_column(Float)
 
     session: Mapped["PaperTradingSession"] = relationship(back_populates="trades")
+
+
+class SavedStrategy(Base):
+    __tablename__ = "saved_strategies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    strategy_type: Mapped[str] = mapped_column(String(64))
+    category: Mapped[str] = mapped_column(String(32))
+    # Mercados y temporalidades donde el usuario declara que la estrategia aplica; son
+    # metadata declarativa y no implican que exista dataset para correr un backtest —
+    # eso se valida aparte contra los datasets realmente disponibles.
+    symbols: Mapped[list[str]] = mapped_column(JSON)
+    timeframes: Mapped[list[str]] = mapped_column(JSON)
+    # Texto libre, no un DSL ejecutable: hoy la lógica de entrada/salida vive fija en el
+    # código de la estrategia registrada (Strategy.on_bar), esto es solo documentación.
+    entry_conditions: Mapped[str] = mapped_column(Text, default="")
+    exit_conditions: Mapped[str] = mapped_column(Text, default="")
+    # StrategyConfig.model_dump() base (SL/TP/trailing/riesgo/indicadores); cada corrida
+    # de backtest puede pisar symbol/timeframe pero parte de esta config.
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="saved_strategies")
+    backtest_runs: Mapped[list["StrategyBacktestRun"]] = relationship(
+        back_populates="strategy",
+        cascade="all, delete-orphan",
+        order_by="StrategyBacktestRun.created_at.desc()",
+    )
+
+
+class StrategyBacktestRun(Base):
+    __tablename__ = "strategy_backtest_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("saved_strategies.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    dataset: Mapped[str] = mapped_column(String(120))
+    # Config exacta usada en esta corrida (symbol/timeframe incluidos): si la estrategia
+    # se edita después, el historial no debe cambiar retroactivamente.
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
+    initial_equity: Mapped[float] = mapped_column(Float)
+    num_trades: Mapped[int] = mapped_column(Integer)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON)
+    equity_curve: Mapped[list[Any]] = mapped_column(JSON)
+    # A diferencia de PaperTrade, va como JSON acá y no en tabla propia: cada corrida es
+    # un snapshot histórico inmutable, no algo que se re-tickee y reemplace.
+    trades: Mapped[list[Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    strategy: Mapped["SavedStrategy"] = relationship(back_populates="backtest_runs")

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -11,10 +9,15 @@ import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles
 from tradingos.api.routers import auth as auth_router
 from tradingos.api.routers import brokers as brokers_router
 from tradingos.api.routers import paper_trading as paper_trading_router
-from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
-from tradingos.backtest.engine import BacktestEngine
-from tradingos.backtest.result import BacktestResult
-from tradingos.core.strategy import Strategy, StrategyConfig, get_strategy, list_strategies
+from tradingos.api.routers import strategies as strategies_router
+from tradingos.backtest.service import (
+    DATA_DIR,
+    resolve_dataset,
+    resolve_strategy,
+    run_backtest_result,
+    run_backtest_summary,
+)
+from tradingos.core.strategy import StrategyConfig, get_strategy
 from tradingos.data.loader import load_ohlcv
 from tradingos.db.migrate import run_migrations
 from tradingos.montecarlo.simulator import MonteCarloResult, run_monte_carlo
@@ -22,11 +25,6 @@ from tradingos.optimize.grid import ParameterGrid, combination_count
 from tradingos.optimize.optimizer import OptimizationResult, run_grid_search
 from tradingos.strategies.ma_crossover import default_config
 
-# No se puede derivar de __file__: bajo una instalación no editable (como en la imagen
-# Docker) el paquete vive en site-packages, desconectado del checkout del repo. Se
-# resuelve contra el directorio de trabajo (la raíz del repo, tanto localmente como en
-# el WORKDIR del contenedor), con override explícito disponible para otros layouts.
-DATA_DIR = Path(os.environ.get("TRADINGOS_DATA_DIR", "data/historical")).resolve()
 DEMO_DATASET = "BTCUSDT_1h.parquet"
 
 # Medido en producción: ~8s por backtest completo sobre BTCUSDT_1h (~5x más lento que
@@ -61,47 +59,12 @@ app = FastAPI(title="Trading OS API", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router.router)
 app.include_router(brokers_router.router)
 app.include_router(paper_trading_router.router)
+app.include_router(strategies_router.router)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/strategies")
-def strategies() -> list[str]:
-    return list_strategies()
-
-
-def _resolve_dataset(dataset: str) -> Path:
-    dataset_path = (DATA_DIR / dataset).resolve()
-    if not dataset_path.is_relative_to(DATA_DIR) or not dataset_path.is_file():
-        raise HTTPException(status_code=404, detail="dataset no encontrado")
-    return dataset_path
-
-
-def _resolve_strategy(name: str) -> type[Strategy]:
-    try:
-        return get_strategy(name)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-def _run_backtest_result(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> BacktestResult:
-    data = load_ohlcv(dataset_path)
-    strategy = strategy_cls(config)
-    engine = BacktestEngine(strategy, SimulatedBroker(BrokerSimConfig()), initial_equity=initial_equity)
-    return engine.run(data)
-
-
-def _run_backtest(strategy_cls: type[Strategy], config: StrategyConfig, dataset_path: Path, initial_equity: float) -> dict:
-    result = _run_backtest_result(strategy_cls, config, dataset_path, initial_equity)
-    weekly_equity = result.equity_curve.resample("W").last().dropna()
-    return {
-        "num_trades": len(result.trades),
-        "metrics": result.metrics,
-        "equity_curve": [{"timestamp": ts.isoformat(), "equity": float(value)} for ts, value in weekly_equity.items()],
-    }
 
 
 class BacktestRequest(BaseModel):
@@ -113,9 +76,9 @@ class BacktestRequest(BaseModel):
 
 @app.post("/backtests")
 def run_backtest(request: BacktestRequest) -> dict:
-    dataset_path = _resolve_dataset(request.dataset)
-    strategy_cls = _resolve_strategy(request.strategy)
-    return _run_backtest(strategy_cls, request.config, dataset_path, request.initial_equity)
+    dataset_path = resolve_dataset(request.dataset, DATA_DIR)
+    strategy_cls = resolve_strategy(request.strategy)
+    return run_backtest_summary(strategy_cls, request.config, dataset_path, request.initial_equity)
 
 
 @app.get("/backtests/demo")
@@ -124,7 +87,7 @@ def demo_backtest() -> dict:
     resultado real sin que el cliente tenga que mandar un StrategyConfig completo."""
     dataset_path = DATA_DIR / DEMO_DATASET
     strategy_cls = get_strategy("ma_crossover")
-    return _run_backtest(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)
+    return run_backtest_summary(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)
 
 
 def _serialize_optimization(results: list[OptimizationResult], grid: ParameterGrid, top_n: int) -> dict:
@@ -156,8 +119,8 @@ def optimize(request: OptimizeRequest) -> dict:
             detail=f"la grilla tiene {total} combinaciones, el máximo permitido es {MAX_GRID_COMBINATIONS}",
         )
 
-    dataset_path = _resolve_dataset(request.dataset)
-    strategy_cls = _resolve_strategy(request.strategy)
+    dataset_path = resolve_dataset(request.dataset, DATA_DIR)
+    strategy_cls = resolve_strategy(request.strategy)
 
     data = load_ohlcv(dataset_path)
     results = run_grid_search(strategy_cls, request.config, request.grid, data, request.initial_equity, request.rank_by)
@@ -205,10 +168,10 @@ def montecarlo(request: MonteCarloRequest) -> dict:
             detail=f"num_simulations debe estar entre 1 y {MAX_MONTE_CARLO_SIMULATIONS}",
         )
 
-    dataset_path = _resolve_dataset(request.dataset)
-    strategy_cls = _resolve_strategy(request.strategy)
+    dataset_path = resolve_dataset(request.dataset, DATA_DIR)
+    strategy_cls = resolve_strategy(request.strategy)
 
-    backtest_result = _run_backtest_result(strategy_cls, request.config, dataset_path, request.initial_equity)
+    backtest_result = run_backtest_result(strategy_cls, request.config, dataset_path, request.initial_equity)
     mc_result = run_monte_carlo(
         backtest_result.trades,
         request.initial_equity,
@@ -227,6 +190,6 @@ def montecarlo_demo() -> dict:
     dataset_path = DATA_DIR / DEMO_DATASET
     strategy_cls = get_strategy("ma_crossover")
 
-    backtest_result = _run_backtest_result(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)
+    backtest_result = run_backtest_result(strategy_cls, default_config(), dataset_path, initial_equity=10_000.0)
     mc_result = run_monte_carlo(backtest_result.trades, 10_000.0, backtest_result.metrics, num_simulations=1000)
     return _serialize_monte_carlo(mc_result)
