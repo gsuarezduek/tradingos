@@ -83,15 +83,18 @@ def test_create_session_does_not_persist_when_first_tick_fails(monkeypatch):
         db.close()
 
 
-def test_create_session_rejects_second_active_session(monkeypatch):
+def test_create_session_allows_multiple_concurrent_active_sessions(monkeypatch):
     _mock_tick_ok(monkeypatch)
-    token = _register_and_get_token("second@example.com")
+    token = _register_and_get_token("concurrent@example.com")
 
-    first = client.post("/paper-trading/sessions", json=_create_payload(), headers=_auth_headers(token))
+    first = client.post("/paper-trading/sessions", json=_create_payload(symbol="BTCUSDT"), headers=_auth_headers(token))
+    second = client.post("/paper-trading/sessions", json=_create_payload(symbol="ETHUSDT"), headers=_auth_headers(token))
     assert first.status_code == 200
+    assert second.status_code == 200
 
-    second = client.post("/paper-trading/sessions", json=_create_payload(), headers=_auth_headers(token))
-    assert second.status_code == 400
+    listed = client.get("/paper-trading/sessions", headers=_auth_headers(token))
+    statuses = {s["id"]: s["status"] for s in listed.json()}
+    assert statuses == {first.json()["id"]: "active", second.json()["id"]: "active"}
 
 
 def test_stop_session_allows_creating_a_new_one(monkeypatch):
@@ -141,6 +144,18 @@ def test_session_detail_includes_equity_curve_and_trades(monkeypatch):
     assert body["current_equity"] == 10_500.0
     assert body["equity_curve"] == [{"timestamp": "2024-01-01T00:00:00+00:00", "equity": 10_500.0}]
     assert body["trades"] == []
+
+
+def test_session_response_includes_config(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("config@example.com")
+
+    created = client.post("/paper-trading/sessions", json=_create_payload(), headers=_auth_headers(token))
+    assert created.status_code == 200
+    assert created.json()["config"]["symbol"] == "BTCUSDT"
+
+    listed = client.get("/paper-trading/sessions", headers=_auth_headers(token))
+    assert listed.json()[0]["config"]["symbol"] == "BTCUSDT"
 
 
 def test_session_detail_for_other_users_session_returns_404(monkeypatch):

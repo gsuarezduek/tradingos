@@ -1,30 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
-import { TopMetricsPanel } from "@/components/TopMetricsPanel";
+import { InfoGuide } from "@/components/InfoGuide";
 
-interface OpenPosition {
-  side: string;
-  entry_price: number;
-  quantity: number;
-  stop_loss: number | null;
-  take_profit: number | null;
-  entry_timestamp: string | null;
-}
-
-interface Trade {
-  side: string;
-  entry_timestamp: string;
-  exit_timestamp: string;
-  entry_price: number;
-  exit_price: number;
-  quantity: number;
-  commission: number;
-  pnl: number;
-}
-
-export interface SessionDetail {
+export interface SessionSummary {
   id: number;
   strategy: string;
   symbol: string;
@@ -32,11 +13,8 @@ export interface SessionDetail {
   status: string;
   initial_equity: number;
   current_equity: number;
-  open_position: OpenPosition | null;
   last_tick_at: string | null;
   created_at: string;
-  equity_curve: { timestamp: string; equity: number }[];
-  trades: Trade[];
 }
 
 interface FormState {
@@ -110,30 +88,43 @@ function buildConfig(form: FormState) {
   };
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const active = status === "active";
+  return (
+    <span
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+        active ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
+      }`}
+    >
+      {active ? "Activa" : "Detenida"}
+    </span>
+  );
+}
+
 export function PaperTradingClient({
-  initialSession,
+  initialSessions,
   initialError,
 }: {
-  initialSession: SessionDetail | null;
+  initialSessions: SessionSummary[];
   initialError: string | null;
 }) {
-  const [session, setSession] = useState<SessionDetail | null>(initialSession);
+  const [sessions, setSessions] = useState<SessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(initialError);
 
   const [form, setForm] = useState<FormState>(DEFAULTS);
+  const [showForm, setShowForm] = useState(initialSessions.length === 0);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [stopping, setStopping] = useState(false);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  async function reloadSession(sessionId: number) {
+  async function reloadSessions() {
     try {
-      const response = await fetch(`/api/paper-trading/sessions/${sessionId}`);
+      const response = await fetch("/api/paper-trading/sessions");
       const data = await response.json();
-      if (response.ok) setSession(data);
+      if (response.ok) setSessions(data);
     } catch {
       // silencioso: si falla el refresh, se mantiene el estado anterior
     }
@@ -156,7 +147,9 @@ export function PaperTradingClient({
       }
 
       setLoadError(null);
-      await reloadSession(data.id);
+      setShowForm(false);
+      setForm(DEFAULTS);
+      await reloadSessions();
     } catch {
       setCreateError("No se pudo conectar con la API. Probá de nuevo.");
     } finally {
@@ -164,34 +157,43 @@ export function PaperTradingClient({
     }
   }
 
-  async function stopSession() {
-    if (!session) return;
-    setStopping(true);
-    try {
-      await fetch(`/api/paper-trading/sessions/${session.id}/stop`, { method: "POST" });
-      await reloadSession(session.id);
-    } finally {
-      setStopping(false);
-    }
-  }
-
-  const isActive = session?.status === "active";
-  const trades = session?.trades ?? [];
-  const winRatePct = trades.length > 0 ? (trades.filter((t) => t.pnl > 0).length / trades.length) * 100 : 0;
-  const chartData =
-    session?.equity_curve.slice(-5).map((point) => ({
-      label: new Date(point.timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit" }),
-      value: point.equity,
-    })) ?? [];
+  const activeCount = sessions.filter((s) => s.status === "active").length;
 
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-ink">Paper Trading</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+            Paper Trading
+            <InfoGuide>
+              Paper Trading simula la ejecución de una estrategia contra el mercado real en curso, sin
+              usar plata real. Cada sesión corre el motor de backtest cada 15 minutos (vía un servicio
+              cron) sobre las últimas velas cerradas del símbolo elegido, y actualiza el equity, la
+              posición abierta y las operaciones cerradas.
+              <br />
+              <br />
+              Podés tener varias sesiones corriendo en simultáneo: dale a &quot;+ Nueva sesión&quot; las
+              veces que quieras sin necesidad de detener las que ya están activas. Esta pantalla lista
+              todas tus sesiones (activas e históricas); hacé clic en &quot;Ver detalle&quot; para ver el
+              equity, la posición abierta, los parámetros configurados y las operaciones cerradas de cada
+              una, y desde ahí podés detenerla cuando quieras (queda guardada en el historial, no se
+              borra).
+            </InfoGuide>
+          </h1>
           <p className="text-sm text-muted">Simulación en vivo sobre el mercado real, sin plata real</p>
         </div>
-        <DataBadge live={isActive} label={isActive ? "Sesión activa" : "Sin sesión activa"} />
+        <div className="flex items-center gap-3">
+          <DataBadge
+            live={activeCount > 0}
+            label={activeCount > 0 ? `${activeCount} sesión(es) activa(s)` : "Sin sesiones activas"}
+          />
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white"
+          >
+            {showForm ? "Cancelar" : "+ Nueva sesión"}
+          </button>
+        </div>
       </div>
 
       {loadError && (
@@ -201,10 +203,10 @@ export function PaperTradingClient({
         </div>
       )}
 
-      {!isActive && (
+      {showForm && (
         <div className="rounded-3xl bg-panel p-8">
           <h2 className="text-lg font-bold text-ink">Iniciar sesión de paper trading</h2>
-          <p className="mt-1 text-sm text-muted">EMA Crossover · 1h · una sesión activa a la vez</p>
+          <p className="mt-1 text-sm text-muted">EMA Crossover · 1h</p>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             <label className="flex flex-col gap-1.5">
@@ -244,86 +246,64 @@ export function PaperTradingClient({
         </div>
       )}
 
-      {session && (
-        <>
-          <TopMetricsPanel
-            chartTitle="Equity reciente"
-            chartData={chartData}
-            winRatePct={winRatePct}
-            capitalActual={session.current_equity}
-            statLabel="Operaciones cerradas"
-            statValue={String(trades.length)}
-            live={isActive}
-          />
+      <div className="rounded-3xl bg-panel p-8">
+        <h2 className="text-lg font-bold text-ink">Historial de sesiones</h2>
 
-          <div className="rounded-3xl bg-panel p-8">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-bold text-ink">
-                  {session.symbol} · {session.strategy}
-                </h2>
-                <p className="text-xs text-muted">
-                  {isActive ? "Activa" : "Detenida"} · Última actualización:{" "}
-                  {session.last_tick_at ? new Date(session.last_tick_at).toLocaleString("es-AR") : "todavía no corrió ningún tick"}
-                </p>
-              </div>
-              {isActive && (
-                <button
-                  onClick={stopSession}
-                  disabled={stopping}
-                  className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted disabled:opacity-50"
-                >
-                  {stopping ? "Deteniendo…" : "Detener"}
-                </button>
-              )}
-            </div>
+        {sessions.length === 0 && <p className="mt-4 text-sm text-muted">Todavía no iniciaste ninguna sesión.</p>}
 
-            {session.open_position && (
-              <div className="mt-6 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-ink">
-                <span className="font-semibold uppercase">{session.open_position.side}</span> abierta @{" "}
-                {session.open_position.entry_price.toLocaleString("es-AR", { maximumFractionDigits: 2 })} · qty{" "}
-                {session.open_position.quantity.toLocaleString("es-AR", { maximumFractionDigits: 6 })}
-              </div>
-            )}
-
-            {trades.length === 0 && <p className="mt-6 text-sm text-muted">Todavía no se cerró ninguna operación.</p>}
-
-            {trades.length > 0 && (
-              <div className="mt-6 overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
-                      <th className="pb-2 pr-4 font-medium">Lado</th>
-                      <th className="pb-2 pr-4 font-medium">Entrada</th>
-                      <th className="pb-2 pr-4 font-medium">Salida</th>
-                      <th className="pb-2 font-medium">PnL</th>
+        {sessions.length > 0 && (
+          <div className="mt-6 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
+                  <th className="pb-2 pr-4 font-medium">Símbolo</th>
+                  <th className="pb-2 pr-4 font-medium">Estado</th>
+                  <th className="pb-2 pr-4 font-medium">Equity inicial</th>
+                  <th className="pb-2 pr-4 font-medium">Equity actual</th>
+                  <th className="pb-2 pr-4 font-medium">PnL</th>
+                  <th className="pb-2 pr-4 font-medium">Iniciada</th>
+                  <th className="pb-2 pr-4 font-medium">Última actualización</th>
+                  <th className="pb-2 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => {
+                  const pnlPct = ((s.current_equity - s.initial_equity) / s.initial_equity) * 100;
+                  return (
+                    <tr key={s.id} className="border-b border-border last:border-0">
+                      <td className="py-3 pr-4 font-semibold text-ink">
+                        {s.symbol} <span className="font-normal text-muted">· {s.strategy}</span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <StatusBadge status={s.status} />
+                      </td>
+                      <td className="py-3 pr-4 text-ink">${s.initial_equity.toLocaleString("es-AR")}</td>
+                      <td className="py-3 pr-4 text-ink">${s.current_equity.toLocaleString("es-AR")}</td>
+                      <td className={`py-3 pr-4 font-semibold ${pnlPct >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {pnlPct >= 0 ? "+" : ""}
+                        {pnlPct.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%
+                      </td>
+                      <td className="py-3 pr-4 text-muted">
+                        {new Date(s.created_at).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className="py-3 pr-4 text-muted">
+                        {s.last_tick_at
+                          ? new Date(s.last_tick_at).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+                          : "todavía no corrió"}
+                      </td>
+                      <td className="py-3">
+                        <Link href={`/paper-trading/${s.id}`} className="text-sm font-semibold text-ink underline">
+                          Ver detalle →
+                        </Link>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {trades
-                      .slice()
-                      .reverse()
-                      .map((trade, i) => (
-                        <tr key={i} className="border-b border-border last:border-0">
-                          <td className="py-2 pr-4 font-semibold uppercase text-ink">{trade.side}</td>
-                          <td className="py-2 pr-4 text-ink">
-                            {new Date(trade.entry_timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit" })}
-                          </td>
-                          <td className="py-2 pr-4 text-ink">
-                            {new Date(trade.exit_timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit" })}
-                          </td>
-                          <td className={`py-2 ${trade.pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {trade.pnl.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </>
-      )}
+        )}
+      </div>
     </div>
   );
 }

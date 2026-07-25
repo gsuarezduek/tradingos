@@ -31,6 +31,7 @@ class SessionResponse(BaseModel):
     symbol: str
     timeframe: str
     status: str
+    config: dict[str, Any]
     initial_equity: float
     current_equity: float
     open_position: dict[str, Any] | None
@@ -61,6 +62,7 @@ def _to_session_response(session: PaperTradingSession) -> SessionResponse:
         symbol=session.symbol,
         timeframe=session.timeframe,
         status=session.status,
+        config=session.config,
         initial_equity=session.initial_equity,
         current_equity=session.current_equity,
         open_position=session.open_position,
@@ -92,16 +94,8 @@ def create_session(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    existing = (
-        db.query(PaperTradingSession)
-        .filter(PaperTradingSession.user_id == user.id, PaperTradingSession.status == "active")
-        .first()
-    )
-    if existing is not None:
-        raise HTTPException(
-            status_code=400, detail="ya tenés una sesión de paper trading activa; detenela antes de arrancar otra"
-        )
-
+    # Sin límite de sesiones activas simultáneas por usuario: cada una corre
+    # independiente en el tick del cron (run_all_active ya itera todas las activas).
     session = PaperTradingSession(
         user_id=user.id,
         strategy=request.strategy,
