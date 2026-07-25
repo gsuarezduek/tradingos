@@ -1,66 +1,90 @@
-import { DataBadge } from "@/components/DataBadge";
-import { InfoGuide } from "@/components/InfoGuide";
-import { TopMetricsPanel } from "@/components/TopMetricsPanel";
-import { StrategyBoard } from "@/components/StrategyBoard";
-import { getLiveBacktest } from "@/lib/api";
-import { strategies as dummyStrategies, summary, weeklyPnl } from "@/lib/dummy-data";
+import Link from "next/link";
+import { API_BASE_URL } from "@/lib/api";
+import { getSessionToken } from "@/lib/session";
+import { EXCHANGES } from "@/lib/exchanges";
+import type { Connection } from "@/app/conexiones/ConexionesClient";
+import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import { DashboardClient } from "./DashboardClient";
+
+async function fetchConnections(token: string): Promise<{ connections: Connection[]; error: string | null }> {
+  try {
+    const responses = await Promise.all(
+      EXCHANGES.map((exchange) =>
+        fetch(`${API_BASE_URL}/brokers/${exchange.value}/connections`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10000),
+          cache: "no-store", // datos por usuario: nunca compartir esta respuesta entre requests
+        }),
+      ),
+    );
+
+    const bodies = await Promise.all(responses.map((r) => r.json()));
+    const failedIndex = responses.findIndex((r) => !r.ok);
+    if (failedIndex !== -1) {
+      const failedBody = bodies[failedIndex];
+      return {
+        connections: [],
+        error: typeof failedBody.detail === "string" ? failedBody.detail : "No se pudieron cargar tus conexiones.",
+      };
+    }
+
+    const connections = (bodies as Connection[][]).flat();
+    connections.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    return { connections, error: null };
+  } catch {
+    return { connections: [], error: "No se pudo conectar con la API." };
+  }
+}
+
+async function fetchActiveStrategies(token: string): Promise<{ strategies: SavedStrategySummary[]; error: string | null }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/strategies`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return {
+        strategies: [],
+        error: typeof data.detail === "string" ? data.detail : "No se pudieron cargar tus estrategias.",
+      };
+    }
+    return { strategies: (data as SavedStrategySummary[]).filter((s) => s.status === "active"), error: null };
+  } catch {
+    return { strategies: [], error: "No se pudo conectar con la API." };
+  }
+}
 
 export default async function Home() {
-  const live = await getLiveBacktest();
+  const token = await getSessionToken();
 
-  const chartTitle = live ? "Equity semanal · EMA Crossover BTC" : "PnL semanal";
-  const chartData = live
-    ? live.equityCurve.slice(-5).map((point) => ({
-        label: new Date(point.timestamp).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }),
-        value: point.equity,
-      }))
-    : weeklyPnl;
+  if (!token) {
+    return (
+      <div className="rounded-3xl bg-panel p-12 text-center">
+        <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm text-muted">
+          Iniciá sesión para ver el capital total de tus cuentas conectadas y tus estrategias activas.
+        </p>
+        <Link
+          href="/login"
+          className="mt-6 inline-block rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white"
+        >
+          Iniciar sesión
+        </Link>
+      </div>
+    );
+  }
 
-  const winRatePct = live ? live.metrics.win_rate * 100 : summary.winRatePct;
-  const capitalActual = live ? (live.equityCurve.at(-1)?.equity ?? summary.capitalActual) : summary.capitalActual;
-  const statLabel = live ? "Operaciones cerradas" : "Operaciones abiertas";
-  const statValue = live ? String(live.numTrades) : String(summary.operacionesAbiertas);
-
-  const strategies = dummyStrategies.map((strategy) =>
-    live && strategy.id === "1"
-      ? {
-          ...strategy,
-          profitFactor: live.metrics.profit_factor,
-          maxDrawdownPct: live.metrics.max_drawdown * 100,
-        }
-      : strategy,
-  );
+  const [{ connections, error: connectionsError }, { strategies: activeStrategies, error: strategiesError }] =
+    await Promise.all([fetchConnections(token), fetchActiveStrategies(token)]);
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-            Dashboard
-            <InfoGuide>
-              Vista general de tu operativa. El panel de arriba muestra la evolución semanal del equity, el win
-              rate y las operaciones cerradas de la estrategia de ejemplo (EMA Crossover BTC) cuando hay un
-              backtest real disponible; si no, se completa con datos de ejemplo para no dejar la pantalla vacía.
-              Abajo, el tablero agrupa tus estrategias por estado (activas, en paper trading, en backtesting,
-              pausadas).
-            </InfoGuide>
-          </h1>
-          <p className="text-sm text-muted">Vista general de tu operativa</p>
-        </div>
-        <DataBadge live={false} label="Estrategias de ejemplo" />
-      </div>
-
-      <TopMetricsPanel
-        chartTitle={chartTitle}
-        chartData={chartData}
-        winRatePct={winRatePct}
-        capitalActual={capitalActual}
-        statLabel={statLabel}
-        statValue={statValue}
-        live={live !== null}
-      />
-
-      <StrategyBoard strategies={strategies} />
-    </div>
+    <DashboardClient
+      initialConnections={connections}
+      connectionsError={connectionsError}
+      activeStrategies={activeStrategies}
+      strategiesError={strategiesError}
+    />
   );
 }

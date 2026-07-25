@@ -56,7 +56,7 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: "swing", label: "Swing" },
 ];
 
-const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(CATEGORY_OPTIONS.map((c) => [c.value, c.label]));
+export const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(CATEGORY_OPTIONS.map((c) => [c.value, c.label]));
 
 interface FormState {
   name: string;
