@@ -363,3 +363,41 @@ def test_bitget_connection_balances_decrypts_passphrase(monkeypatch):
     assert body["spot"]["usdt_total"] == 50000.0
     assert "futures_usdm" not in body
     assert seen_credentials == [("real-key", "real-secret", "real-pass")]
+
+
+def test_bingx_test_balances_returns_ok_section_without_saving(monkeypatch):
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.bingx_get_spot_balances",
+        lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
+    )
+    monkeypatch.setattr("tradingos.api.routers.brokers.bingx_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
+    response = client.post("/brokers/bingx/balances", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"] == {
+        "ok": True,
+        "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0, "usdt_value": 50000.0}],
+        "usdt_total": 50000.0,
+    }
+    assert "futures_usdm" not in body
+
+    db = SessionLocal()
+    try:
+        assert db.query(BrokerConnection).count() == 0
+    finally:
+        db.close()
+
+
+def test_bingx_create_connection_persists_with_exchange_field(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.brokers.bingx_get_spot_balances", lambda api_key, api_secret: [])
+    token = _register_and_get_token("bingx-user@example.com")
+
+    response = client.post(
+        "/brokers/bingx/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "Mi cuenta BingX"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exchange"] == "bingx"
+    assert body["label"] == "Mi cuenta BingX"

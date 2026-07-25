@@ -11,4 +11,5 @@ export const EXCHANGES: ExchangeOption[] = [
   { value: "binance", label: "Binance", requiresPassphrase: false },
   { value: "mexc", label: "MEXC", requiresPassphrase: false },
   { value: "bitget", label: "Bitget", requiresPassphrase: true },
+  { value: "bingx", label: "BingX", requiresPassphrase: false },
 ];

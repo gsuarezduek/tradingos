@@ -14,6 +14,9 @@ from tradingos.connectors.binance import (
     get_spot_balances,
     get_spot_usdt_prices as binance_get_spot_usdt_prices,
 )
+from tradingos.connectors.bingx import BingxAPIError
+from tradingos.connectors.bingx import get_spot_balances as bingx_get_spot_balances
+from tradingos.connectors.bingx import get_spot_usdt_prices as bingx_get_spot_usdt_prices
 from tradingos.connectors.bitget import BitgetAPIError
 from tradingos.connectors.bitget import get_spot_balances as bitget_get_spot_balances
 from tradingos.connectors.bitget import get_spot_usdt_prices as bitget_get_spot_usdt_prices
@@ -26,7 +29,7 @@ from tradingos.db.session import get_db
 
 router = APIRouter(prefix="/brokers/{exchange}", tags=["brokers"])
 
-_APIErrors = (BinanceAPIError, MexcAPIError, BitgetAPIError)
+_APIErrors = (BinanceAPIError, MexcAPIError, BitgetAPIError, BingxAPIError)
 
 BalanceFn = Callable[[str, str, "str | None"], list[dict]]
 
@@ -47,6 +50,10 @@ def _bitget_spot(api_key: str, api_secret: str, passphrase: str | None) -> list[
     return bitget_get_spot_balances(api_key, api_secret, passphrase or "")
 
 
+def _bingx_spot(api_key: str, api_secret: str, passphrase: str | None) -> list[dict]:
+    return bingx_get_spot_balances(api_key, api_secret)
+
+
 # Wrappers indirectos (en vez de pasar las funciones importadas directo a
 # ExchangeSpec) para que los tests puedan mockear por nombre de módulo, igual que
 # con spot_fn/futures_fn de arriba.
@@ -60,6 +67,10 @@ def _mexc_usdt_prices() -> dict[str, float]:
 
 def _bitget_usdt_prices() -> dict[str, float]:
     return bitget_get_spot_usdt_prices()
+
+
+def _bingx_usdt_prices() -> dict[str, float]:
+    return bingx_get_spot_usdt_prices()
 
 
 @dataclass(frozen=True)
@@ -83,6 +94,7 @@ _EXCHANGES: dict[str, ExchangeSpec] = {
     "bitget": ExchangeSpec(
         display_name="Bitget", spot_fn=_bitget_spot, requires_passphrase=True, usdt_prices_fn=_bitget_usdt_prices
     ),
+    "bingx": ExchangeSpec(display_name="BingX", spot_fn=_bingx_spot, usdt_prices_fn=_bingx_usdt_prices),
 }
 
 
