@@ -5,6 +5,7 @@ from tradingos.connectors.binance import (
     BinanceAPIError,
     get_futures_usdm_balances,
     get_spot_balances,
+    get_spot_usdt_prices,
 )
 
 
@@ -59,3 +60,14 @@ def test_get_futures_usdm_balances_filters_zero_balances(monkeypatch):
     assert balances == [
         {"asset": "USDT", "balance": 50.0, "available_balance": 40.0, "cross_unrealized_pnl": 1.5},
     ]
+
+
+def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
+    payload = [
+        {"symbol": "BTCUSDT", "price": "64399.57"},
+        {"symbol": "ETHBTC", "price": "0.02913000"},
+        {"symbol": "ETHUSDT", "price": "3200.5"},
+    ]
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
+
+    assert get_spot_usdt_prices() == {"BTC": 64399.57, "ETH": 3200.5}

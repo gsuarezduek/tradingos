@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from tradingos.connectors.mexc import MexcAPIError, get_spot_balances
+from tradingos.connectors.mexc import MexcAPIError, get_spot_balances, get_spot_usdt_prices
 
 
 class _FakeResponse:
@@ -54,3 +54,14 @@ def test_get_spot_balances_sends_mexc_apikey_header(monkeypatch):
     get_spot_balances("my-key", "my-secret")
 
     assert seen_headers[0] == {"X-MEXC-APIKEY": "my-key"}
+
+
+def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
+    payload = [
+        {"symbol": "BTCUSDT", "price": "64397.84"},
+        {"symbol": "METALUSDT", "price": "0.10299"},
+        {"symbol": "ETHBTC", "price": "0.02913"},
+    ]
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
+
+    assert get_spot_usdt_prices() == {"BTC": 64397.84, "METAL": 0.10299}

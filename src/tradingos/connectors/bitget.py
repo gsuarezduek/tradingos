@@ -52,6 +52,32 @@ def _signed_get(path: str, api_key: str, api_secret: str, passphrase: str) -> di
     return body
 
 
+def _public_get(url: str) -> dict:
+    # Endpoint público (sin firma ni API key) — se usa para precios, no para datos
+    # de cuenta. Misma envoltura {code, msg, data} que los endpoints firmados.
+    try:
+        response = requests.get(url, timeout=_TIMEOUT)
+    except requests.RequestException as exc:
+        raise BitgetAPIError(f"no se pudo conectar con Bitget: {exc}") from exc
+
+    try:
+        body = response.json()
+    except ValueError:
+        raise BitgetAPIError(response.text) from None
+
+    if body.get("code") != "00000":
+        raise BitgetAPIError(body.get("msg", "error desconocido de Bitget"))
+
+    return body
+
+
+def get_spot_usdt_prices() -> dict[str, float]:
+    """Último precio de cada par spot cotizado en USDT, indexado por activo base
+    (ej. {"BTC": 64395.3, ...}). Público, no requiere credenciales."""
+    body = _public_get(f"{BASE_URL}/api/v2/spot/market/tickers")
+    return {t["symbol"][: -len("USDT")]: float(t["lastPr"]) for t in body["data"] if t["symbol"].endswith("USDT")}
+
+
 def get_spot_balances(api_key: str, api_secret: str, passphrase: str) -> list[dict]:
     """Balances SPOT (available + frozen) con saldo mayor a cero."""
     body = _signed_get("/api/v2/spot/account/assets", api_key, api_secret, passphrase)

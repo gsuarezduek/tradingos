@@ -8,11 +8,18 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
-from tradingos.connectors.binance import BinanceAPIError, get_futures_usdm_balances, get_spot_balances
+from tradingos.connectors.binance import (
+    BinanceAPIError,
+    get_futures_usdm_balances,
+    get_spot_balances,
+    get_spot_usdt_prices as binance_get_spot_usdt_prices,
+)
 from tradingos.connectors.bitget import BitgetAPIError
 from tradingos.connectors.bitget import get_spot_balances as bitget_get_spot_balances
+from tradingos.connectors.bitget import get_spot_usdt_prices as bitget_get_spot_usdt_prices
 from tradingos.connectors.mexc import MexcAPIError
 from tradingos.connectors.mexc import get_spot_balances as mexc_get_spot_balances
+from tradingos.connectors.mexc import get_spot_usdt_prices as mexc_get_spot_usdt_prices
 from tradingos.db import crypto
 from tradingos.db.models import BrokerConnection, User
 from tradingos.db.session import get_db
@@ -40,10 +47,26 @@ def _bitget_spot(api_key: str, api_secret: str, passphrase: str | None) -> list[
     return bitget_get_spot_balances(api_key, api_secret, passphrase or "")
 
 
+# Wrappers indirectos (en vez de pasar las funciones importadas directo a
+# ExchangeSpec) para que los tests puedan mockear por nombre de módulo, igual que
+# con spot_fn/futures_fn de arriba.
+def _binance_usdt_prices() -> dict[str, float]:
+    return binance_get_spot_usdt_prices()
+
+
+def _mexc_usdt_prices() -> dict[str, float]:
+    return mexc_get_spot_usdt_prices()
+
+
+def _bitget_usdt_prices() -> dict[str, float]:
+    return bitget_get_spot_usdt_prices()
+
+
 @dataclass(frozen=True)
 class ExchangeSpec:
     display_name: str
     spot_fn: BalanceFn
+    usdt_prices_fn: Callable[[], dict[str, float]]
     futures_fn: BalanceFn | None = None
     requires_passphrase: bool = False
 
@@ -53,9 +76,13 @@ class ExchangeSpec:
 # misma certeza que spot contra la documentación oficial — agregarlos a ciegas
 # arriesga reportar un balance o PnL mal calculado en una integración financiera real.
 _EXCHANGES: dict[str, ExchangeSpec] = {
-    "binance": ExchangeSpec(display_name="Binance", spot_fn=_binance_spot, futures_fn=_binance_futures),
-    "mexc": ExchangeSpec(display_name="MEXC", spot_fn=_mexc_spot),
-    "bitget": ExchangeSpec(display_name="Bitget", spot_fn=_bitget_spot, requires_passphrase=True),
+    "binance": ExchangeSpec(
+        display_name="Binance", spot_fn=_binance_spot, futures_fn=_binance_futures, usdt_prices_fn=_binance_usdt_prices
+    ),
+    "mexc": ExchangeSpec(display_name="MEXC", spot_fn=_mexc_spot, usdt_prices_fn=_mexc_usdt_prices),
+    "bitget": ExchangeSpec(
+        display_name="Bitget", spot_fn=_bitget_spot, requires_passphrase=True, usdt_prices_fn=_bitget_usdt_prices
+    ),
 }
 
 
@@ -73,8 +100,33 @@ def _fetch_section(fetch_fn: BalanceFn, api_key: str, api_secret: str, passphras
         return {"ok": False, "error": str(exc)}
 
 
+def _with_usdt_values(balances: list[dict], get_prices: Callable[[], dict[str, float]]) -> dict:
+    try:
+        prices = get_prices()
+    except _APIErrors:
+        # No se pudieron obtener precios (falla de red/API pública del exchange) —
+        # se listan los balances igual, sin equivalente en USDT en vez de romper.
+        return {"balances": [{**b, "usdt_value": None} for b in balances], "usdt_total": None}
+
+    total = 0.0
+    enriched = []
+    for b in balances:
+        if b["asset"] == "USDT":
+            value = b["total"]
+        else:
+            price = prices.get(b["asset"])
+            value = b["total"] * price if price is not None else None
+        if value is not None:
+            total += value
+        enriched.append({**b, "usdt_value": value})
+    return {"balances": enriched, "usdt_total": total}
+
+
 def _fetch_balances(spec: ExchangeSpec, api_key: str, api_secret: str, passphrase: str | None) -> dict:
-    result = {"spot": _fetch_section(spec.spot_fn, api_key, api_secret, passphrase)}
+    spot = _fetch_section(spec.spot_fn, api_key, api_secret, passphrase)
+    if spot["ok"]:
+        spot = {**spot, **_with_usdt_values(spot["balances"], spec.usdt_prices_fn)}
+    result = {"spot": spot}
     if spec.futures_fn is not None:
         result["futures_usdm"] = _fetch_section(spec.futures_fn, api_key, api_secret, passphrase)
     return result

@@ -22,6 +22,7 @@ def test_test_balances_returns_ok_sections_without_saving(monkeypatch):
         "tradingos.api.routers.brokers.get_spot_balances",
         lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
     )
+    monkeypatch.setattr("tradingos.api.routers.brokers.binance_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
     monkeypatch.setattr(
         "tradingos.api.routers.brokers.get_futures_usdm_balances",
         lambda api_key, api_secret: [{"asset": "USDT", "balance": 10.0, "available_balance": 10.0, "cross_unrealized_pnl": 0.0}],
@@ -29,7 +30,11 @@ def test_test_balances_returns_ok_sections_without_saving(monkeypatch):
     response = client.post("/brokers/binance/balances", json={"api_key": "k", "api_secret": "s"})
     assert response.status_code == 200
     body = response.json()
-    assert body["spot"] == {"ok": True, "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]}
+    assert body["spot"] == {
+        "ok": True,
+        "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0, "usdt_value": 50000.0}],
+        "usdt_total": 50000.0,
+    }
     assert body["futures_usdm"]["ok"] is True
 
     db = SessionLocal()
@@ -181,12 +186,15 @@ def test_connection_balances_decrypts_and_calls_connector(monkeypatch):
 
     monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", _fake_spot)
     monkeypatch.setattr("tradingos.api.routers.brokers.get_futures_usdm_balances", lambda api_key, api_secret: [])
+    monkeypatch.setattr("tradingos.api.routers.brokers.binance_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
 
     response = client.get(f"/brokers/binance/connections/{connection_id}/balances", headers=_auth_headers(token))
     assert response.status_code == 200
     body = response.json()
     assert body["spot"]["ok"] is True
     assert body["spot"]["balances"][0]["asset"] == "BTC"
+    assert body["spot"]["balances"][0]["usdt_value"] == 50000.0
+    assert body["spot"]["usdt_total"] == 50000.0
     assert seen_credentials == [("real-key", "real-secret")]
 
 
@@ -194,6 +202,43 @@ def test_connection_balances_for_missing_connection_returns_404():
     token = _register_and_get_token("j@example.com")
     response = client.get("/brokers/binance/connections/999/balances", headers=_auth_headers(token))
     assert response.status_code == 404
+
+
+def test_test_balances_usdt_value_is_null_when_asset_has_no_price(monkeypatch):
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.get_spot_balances",
+        lambda api_key, api_secret: [
+            {"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0},
+            {"asset": "SOMEOBSCURECOIN", "free": 2.0, "locked": 0.0, "total": 2.0},
+        ],
+    )
+    monkeypatch.setattr("tradingos.api.routers.brokers.binance_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_futures_usdm_balances", lambda api_key, api_secret: [])
+
+    response = client.post("/brokers/binance/balances", json={"api_key": "k", "api_secret": "s"})
+    body = response.json()
+    assert body["spot"]["balances"][0]["usdt_value"] == 50000.0
+    assert body["spot"]["balances"][1]["usdt_value"] is None
+    assert body["spot"]["usdt_total"] == 50000.0  # el activo sin precio no entra en la suma
+
+
+def test_test_balances_usdt_total_is_null_when_price_endpoint_fails(monkeypatch):
+    def _raise_prices():
+        raise BinanceAPIError("no se pudo conectar con Binance: timeout")
+
+    monkeypatch.setattr(
+        "tradingos.api.routers.brokers.get_spot_balances",
+        lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
+    )
+    monkeypatch.setattr("tradingos.api.routers.brokers.binance_get_spot_usdt_prices", _raise_prices)
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_futures_usdm_balances", lambda api_key, api_secret: [])
+
+    response = client.post("/brokers/binance/balances", json={"api_key": "k", "api_secret": "s"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spot"]["ok"] is True
+    assert body["spot"]["balances"][0]["usdt_value"] is None
+    assert body["spot"]["usdt_total"] is None
 
 
 def test_unsupported_exchange_returns_404():
@@ -206,10 +251,15 @@ def test_mexc_test_balances_returns_ok_section_without_saving(monkeypatch):
         "tradingos.api.routers.brokers.mexc_get_spot_balances",
         lambda api_key, api_secret: [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}],
     )
+    monkeypatch.setattr("tradingos.api.routers.brokers.mexc_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
     response = client.post("/brokers/mexc/balances", json={"api_key": "k", "api_secret": "s"})
     assert response.status_code == 200
     body = response.json()
-    assert body["spot"] == {"ok": True, "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]}
+    assert body["spot"] == {
+        "ok": True,
+        "balances": [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0, "usdt_value": 50000.0}],
+        "usdt_total": 50000.0,
+    }
     assert "futures_usdm" not in body
 
     db = SessionLocal()
@@ -303,9 +353,13 @@ def test_bitget_connection_balances_decrypts_passphrase(monkeypatch):
         return [{"asset": "BTC", "free": 1.0, "locked": 0.0, "total": 1.0}]
 
     monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_balances", _fake_spot)
+    monkeypatch.setattr("tradingos.api.routers.brokers.bitget_get_spot_usdt_prices", lambda: {"BTC": 50000.0})
 
     response = client.get(f"/brokers/bitget/connections/{connection_id}/balances", headers=_auth_headers(token))
     assert response.status_code == 200
-    assert response.json()["spot"]["ok"] is True
-    assert "futures_usdm" not in response.json()
+    body = response.json()
+    assert body["spot"]["ok"] is True
+    assert body["spot"]["balances"][0]["usdt_value"] == 50000.0
+    assert body["spot"]["usdt_total"] == 50000.0
+    assert "futures_usdm" not in body
     assert seen_credentials == [("real-key", "real-secret", "real-pass")]

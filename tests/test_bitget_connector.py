@@ -5,7 +5,7 @@ import hmac
 import pytest
 import requests
 
-from tradingos.connectors.bitget import BitgetAPIError, _sign, get_spot_balances
+from tradingos.connectors.bitget import BitgetAPIError, _sign, get_spot_balances, get_spot_usdt_prices
 
 
 class _FakeResponse:
@@ -75,3 +75,18 @@ def test_get_spot_balances_sends_required_headers(monkeypatch):
     assert headers["ACCESS-PASSPHRASE"] == "my-passphrase"
     assert "ACCESS-SIGN" in headers
     assert "ACCESS-TIMESTAMP" in headers
+
+
+def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
+    payload = {
+        "code": "00000",
+        "msg": "success",
+        "data": [
+            {"symbol": "BTCUSDT", "lastPr": "64395.3"},
+            {"symbol": "TRXUSDT", "lastPr": "0.33074"},
+            {"symbol": "ETHBTC", "lastPr": "0.02913"},
+        ],
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
+
+    assert get_spot_usdt_prices() == {"BTC": 64395.3, "TRX": 0.33074}

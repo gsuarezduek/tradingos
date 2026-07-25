@@ -38,6 +38,31 @@ def _signed_get(base_url: str, path: str, api_key: str, api_secret: str) -> dict
     return response.json()
 
 
+def _public_get(url: str) -> dict | list:
+    # Endpoint público (sin firma ni API key) — se usa para precios, no para datos
+    # de cuenta.
+    try:
+        response = requests.get(url, timeout=_TIMEOUT)
+    except requests.RequestException as exc:
+        raise BinanceAPIError(f"no se pudo conectar con Binance: {exc}") from exc
+
+    if response.status_code != 200:
+        try:
+            detail = response.json().get("msg", response.text)
+        except ValueError:
+            detail = response.text
+        raise BinanceAPIError(detail)
+
+    return response.json()
+
+
+def get_spot_usdt_prices() -> dict[str, float]:
+    """Último precio de cada par spot cotizado en USDT, indexado por activo base
+    (ej. {"BTC": 64399.57, ...}). Público, no requiere credenciales."""
+    tickers = _public_get(f"{SPOT_BASE_URL}/api/v3/ticker/price")
+    return {t["symbol"][: -len("USDT")]: float(t["price"]) for t in tickers if t["symbol"].endswith("USDT")}
+
+
 def get_spot_balances(api_key: str, api_secret: str) -> list[dict]:
     """Balances SPOT (free + locked) con saldo mayor a cero."""
     data = _signed_get(SPOT_BASE_URL, "/api/v3/account", api_key, api_secret)

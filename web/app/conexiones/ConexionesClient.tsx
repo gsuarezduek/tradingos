@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DataBadge } from "@/components/DataBadge";
 import { EXCHANGES } from "@/lib/exchanges";
 
@@ -9,6 +9,7 @@ interface SpotBalance {
   free: number;
   locked: number;
   total: number;
+  usdt_value: number | null;
 }
 
 interface FuturesBalance {
@@ -22,6 +23,9 @@ interface SectionResult<T> {
   ok: boolean;
   balances?: T[];
   error?: string;
+  // Solo la sección spot lo trae — null si no se pudo obtener el precio de ningún
+  // activo (falla del endpoint público de precios), no si faltan algunos.
+  usdt_total?: number | null;
 }
 
 interface ExchangeBalancesResponse {
@@ -40,6 +44,10 @@ export interface Connection {
 
 function exchangeLabel(value: string): string {
   return EXCHANGES.find((e) => e.value === value)?.label ?? value;
+}
+
+function formatUsdt(value: number): string {
+  return value.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function TextField({
@@ -72,7 +80,7 @@ function TextField({
 
 function BalancesPanel({ result }: { result: ExchangeBalancesResponse }) {
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div className={`grid grid-cols-1 gap-6 ${result.futures_usdm ? "lg:grid-cols-2" : ""}`}>
       <div>
         <h3 className="text-sm font-bold text-ink">Spot</h3>
         {!result.spot.ok && (
@@ -92,7 +100,8 @@ function BalancesPanel({ result }: { result: ExchangeBalancesResponse }) {
                   <th className="pb-2 pr-4 font-medium">Activo</th>
                   <th className="pb-2 pr-4 font-medium">Libre</th>
                   <th className="pb-2 pr-4 font-medium">Bloqueado</th>
-                  <th className="pb-2 font-medium">Total</th>
+                  <th className="pb-2 pr-4 font-medium">Total</th>
+                  <th className="pb-2 font-medium">Equivalente en USDT</th>
                 </tr>
               </thead>
               <tbody>
@@ -101,7 +110,8 @@ function BalancesPanel({ result }: { result: ExchangeBalancesResponse }) {
                     <td className="py-2 pr-4 font-semibold text-ink">{b.asset}</td>
                     <td className="py-2 pr-4 text-ink">{b.free.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
                     <td className="py-2 pr-4 text-ink">{b.locked.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
-                    <td className="py-2 text-ink">{b.total.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
+                    <td className="py-2 pr-4 text-ink">{b.total.toLocaleString("es-AR", { maximumFractionDigits: 8 })}</td>
+                    <td className="py-2 text-ink">{b.usdt_value !== null ? formatUsdt(b.usdt_value) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -176,10 +186,47 @@ export function ConexionesClient({
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [balancesById, setBalancesById] = useState<Record<number, ExchangeBalancesResponse>>({});
-  const [balancesLoadingId, setBalancesLoadingId] = useState<number | null>(null);
+  const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [balancesErrorById, setBalancesErrorById] = useState<Record<number, string>>({});
 
   const requiresPassphrase = EXCHANGES.find((e) => e.value === exchange)?.requiresPassphrase ?? false;
+
+  async function fetchBalances(connection: Connection) {
+    setLoadingIds((prev) => new Set(prev).add(connection.id));
+    try {
+      const response = await fetch(`/api/brokers/${connection.exchange}/connections/${connection.id}/balances`);
+      const data = await response.json();
+      if (!response.ok) {
+        setBalancesErrorById((prev) => ({
+          ...prev,
+          [connection.id]: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los saldos.",
+        }));
+        return;
+      }
+      setBalancesById((prev) => ({ ...prev, [connection.id]: data }));
+    } catch {
+      setBalancesErrorById((prev) => ({ ...prev, [connection.id]: "No se pudo conectar con la API." }));
+    } finally {
+      setLoadingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(connection.id);
+        return next;
+      });
+    }
+  }
+
+  // Se piden los saldos de todas las conexiones apenas se conoce la lista, no solo
+  // al expandir "Ver saldos": el total en USDT junto al nombre tiene que estar
+  // disponible sin que el usuario tenga que hacer nada. Implica una llamada firmada
+  // real a cada exchange por cada conexión guardada en cada visita a la página.
+  useEffect(() => {
+    for (const connection of connections) {
+      if (!(connection.id in balancesById) && !loadingIds.has(connection.id)) {
+        fetchBalances(connection);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections]);
 
   async function reloadConnections() {
     try {
@@ -235,31 +282,15 @@ export function ConexionesClient({
     await reloadConnections();
   }
 
-  async function toggleBalances(connection: Connection) {
+  function toggleBalances(connection: Connection) {
     if (expandedId === connection.id) {
       setExpandedId(null);
       return;
     }
 
     setExpandedId(connection.id);
-    if (balancesById[connection.id]) return;
-
-    setBalancesLoadingId(connection.id);
-    try {
-      const response = await fetch(`/api/brokers/${connection.exchange}/connections/${connection.id}/balances`);
-      const data = await response.json();
-      if (!response.ok) {
-        setBalancesErrorById((prev) => ({
-          ...prev,
-          [connection.id]: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los saldos.",
-        }));
-        return;
-      }
-      setBalancesById((prev) => ({ ...prev, [connection.id]: data }));
-    } catch {
-      setBalancesErrorById((prev) => ({ ...prev, [connection.id]: "No se pudo conectar con la API." }));
-    } finally {
-      setBalancesLoadingId(null);
+    if (!balancesById[connection.id] && !loadingIds.has(connection.id)) {
+      fetchBalances(connection);
     }
   }
 
@@ -350,6 +381,12 @@ export function ConexionesClient({
                     <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted">
                       {exchangeLabel(connection.exchange)}
                     </span>
+                    {loadingIds.has(connection.id) && <span className="text-xs text-muted">Calculando saldo…</span>}
+                    {typeof balancesById[connection.id]?.spot.usdt_total === "number" && (
+                      <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-semibold text-ink">
+                        ≈ USD {formatUsdt(balancesById[connection.id].spot.usdt_total as number)}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-muted">
                     Conectada el {new Date(connection.created_at).toLocaleDateString("es-AR")}
@@ -373,7 +410,7 @@ export function ConexionesClient({
 
               {expandedId === connection.id && (
                 <div className="mt-6 border-t border-border pt-6">
-                  {balancesLoadingId === connection.id && <p className="text-sm text-muted">Cargando saldos…</p>}
+                  {loadingIds.has(connection.id) && <p className="text-sm text-muted">Cargando saldos…</p>}
                   {balancesErrorById[connection.id] && (
                     <p className="text-sm text-muted">
                       <span className="font-semibold text-ink">No se pudieron cargar: </span>
