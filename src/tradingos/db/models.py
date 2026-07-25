@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -25,6 +26,9 @@ class User(Base):
     broker_connections: Mapped[list["BrokerConnection"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    paper_trading_sessions: Mapped[list["PaperTradingSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class BrokerConnection(Base):
@@ -42,3 +46,45 @@ class BrokerConnection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="broker_connections")
+
+
+class PaperTradingSession(Base):
+    __tablename__ = "paper_trading_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    strategy: Mapped[str] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    # StrategyConfig.model_dump() completo — se reconstruye tal cual en cada tick.
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    initial_equity: Mapped[float] = mapped_column(Float)
+    current_equity: Mapped[float] = mapped_column(Float)
+    # Últimos ~200 puntos [{"timestamp": iso, "equity": float}, ...] para graficar.
+    equity_curve: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # Snapshot de la posición abierta al último tick (side/entry_price/quantity/...), o
+    # null si está flat. Se pisa entero en cada tick, no se acumula historial.
+    open_position: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    last_tick_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="paper_trading_sessions")
+    trades: Mapped[list["PaperTrade"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class PaperTrade(Base):
+    __tablename__ = "paper_trades"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("paper_trading_sessions.id"), index=True)
+    side: Mapped[str] = mapped_column(String(8))
+    entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exit_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float)
+    pnl: Mapped[float] = mapped_column(Float)
+
+    session: Mapped["PaperTradingSession"] = relationship(back_populates="trades")

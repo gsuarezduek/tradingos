@@ -5,6 +5,7 @@ import tradingos.strategies  # noqa: F401  (registra ma_crossover)
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.core.strategy import get_strategy
+from tradingos.core.types import Side
 from tradingos.strategies.ma_crossover import default_config
 
 
@@ -45,3 +46,19 @@ def test_engine_respects_risk_per_trade_sizing(synthetic_ohlcv):
         risked = abs(trade.entry_price - trade.entry_price * (1 - config.stop_loss_pct)) * trade.quantity
         # el riesgo teórico al abrir no debería superar ampliamente el % configurado del equity inicial
         assert risked <= 10_000.0 * config.risk_per_trade * 1.05
+
+
+def test_engine_reports_final_position_when_still_open(synthetic_ohlcv):
+    # con este fixture (seed=42) la única entrada del período abre en la barra 41 y
+    # cierra en la 45; truncar en la 44 la deja abierta al final del run.
+    truncated = synthetic_ohlcv.iloc[:44].reset_index(drop=True)
+    result = _run_backtest(truncated)
+    assert result.final_position is not None
+    assert result.final_position.side == Side.LONG
+
+
+def test_engine_final_position_is_none_when_flat_at_end(synthetic_ohlcv):
+    # el fixture completo termina en un tramo plano tras el downtrend: sin señal de
+    # reentrada, no debería quedar posición abierta.
+    result = _run_backtest(synthetic_ohlcv)
+    assert result.final_position is None

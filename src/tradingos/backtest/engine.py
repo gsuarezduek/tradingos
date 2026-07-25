@@ -102,7 +102,7 @@ class BacktestEngine:
         equity_curve = pd.Series(equity_values, index=pd.DatetimeIndex(timestamps), name="equity")
         periods_per_year = _TIMEFRAME_PERIODS_PER_YEAR.get(self.strategy.config.timeframe, 365)
         metrics = compute_metrics(trades, equity_curve, periods_per_year)
-        return BacktestResult(equity_curve=equity_curve, trades=trades, metrics=metrics)
+        return BacktestResult(equity_curve=equity_curve, trades=trades, metrics=metrics, final_position=position)
 
     def _open_position(self, side: Side, row: pd.Series, equity: float) -> tuple[float, Position]:
         filled_price = self.broker.fill_price(row["open"], side, is_entry=True)

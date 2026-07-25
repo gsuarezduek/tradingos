@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles)
 from tradingos.api.routers import auth as auth_router
 from tradingos.api.routers import brokers as brokers_router
+from tradingos.api.routers import paper_trading as paper_trading_router
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.backtest.result import BacktestResult
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Trading OS API", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router.router)
 app.include_router(brokers_router.router)
+app.include_router(paper_trading_router.router)
 
 
 @app.get("/health")

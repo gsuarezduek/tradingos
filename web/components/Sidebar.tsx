@@ -33,7 +33,7 @@ const modules: { label: string; icon: LucideIcon; href?: string }[] = [
   { label: "Journal de Trading", icon: NotebookPen },
   { label: "Portfolio de Estrategias", icon: PieChart },
   { label: "Conexión con Exchanges", icon: Plug, href: "/conexiones" },
-  { label: "Paper Trading", icon: FileStack },
+  { label: "Paper Trading", icon: FileStack, href: "/paper-trading" },
   { label: "Trading Automático", icon: Bot },
 ];
 
