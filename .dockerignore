@@ -7,6 +7,5 @@ data/historical/*.parquet
 !data/historical/BTCUSDT_1h.parquet
 .git/
 tests/
-scripts/
 *.pdf
 README.md
