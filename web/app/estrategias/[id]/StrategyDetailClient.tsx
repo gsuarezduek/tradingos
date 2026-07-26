@@ -412,6 +412,8 @@ export function StrategyDetailClient({
   }
 
   const isActive = strategy.status === "active";
+  const activeSessionsCount =
+    liveSessions.filter((s) => s.status === "active").length + paperSessions.filter((s) => s.status === "active").length;
   const selectedDataset = validCombos.find((d) => d.symbol === runSymbol && d.timeframe === runTimeframe) ?? null;
   const trades = selectedRunDetail?.trades ?? [];
   const chartData = (selectedRunDetail?.equity_curve ?? []).slice(-5).map((point) => ({
@@ -555,6 +557,16 @@ export function StrategyDetailClient({
 
       <div className="rounded-3xl bg-panel p-8">
         <h2 className="text-lg font-bold text-ink">{editing ? "Editar estrategia" : "Definición de la estrategia"}</h2>
+
+        {editing && editForm && activeSessionsCount > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <span className="font-semibold">Ojo: </span>
+            esta estrategia tiene {activeSessionsCount} sesión(es) activa(s) (Trading Automático y/o Paper Trading).
+            Lo que guardes acá <strong>no se aplica</strong> a esas sesiones ya corriendo — cada una toma una foto
+            de la configuración al crearse y sigue operando con esa foto hasta que la pares y crees una nueva. Si
+            necesitás que el cambio aplique ya, pausá la estrategia (arriba) y activá una sesión nueva después.
+          </div>
+        )}
 
         {editing && editForm ? (
           <>
