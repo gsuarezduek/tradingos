@@ -16,6 +16,7 @@ import {
   Bot,
   Settings,
   Plug,
+  Send,
   LogIn,
   LogOut,
   type LucideIcon,
@@ -31,6 +32,7 @@ const modules: { label: string; icon: LucideIcon; href?: string }[] = [
   { label: "Journal de Trading", icon: NotebookPen },
   { label: "Portfolio de Estrategias", icon: PieChart },
   { label: "Conexión con Exchanges", icon: Plug, href: "/conexiones" },
+  { label: "Operar Manual", icon: Send, href: "/operar" },
   { label: "Paper Trading", icon: FileStack, href: "/paper-trading" },
   { label: "Trading Automático", icon: Bot },
 ];
