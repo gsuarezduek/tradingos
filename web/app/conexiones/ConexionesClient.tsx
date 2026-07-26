@@ -296,7 +296,7 @@ export function ConexionesClient({
   useEffect(() => {
     for (const connection of connections) {
       if (!(connection.id in balancesById) && !loadingIds.has(connection.id)) {
-        fetchBalances(connection);
+        queueMicrotask(() => fetchBalances(connection));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -285,7 +285,7 @@ export function OperarClient({
   useEffect(() => {
     for (const connection of connections) {
       if (connection.trading_enabled && !(connection.id in ordersById)) {
-        fetchOrders(connection);
+        queueMicrotask(() => fetchOrders(connection));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
