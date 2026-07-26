@@ -131,10 +131,31 @@ def create_session(
         raise HTTPException(status_code=400, detail=f"timeframe no soportado todavía: solo '{_SUPPORTED_TIMEFRAME}'")
 
     strategy = _get_owned_strategy(request.strategy_id, user, db)
+    if strategy.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="la estrategia está pausada — activala en Estrategias antes de crear una sesión de Paper Trading",
+        )
     if request.symbol not in strategy.symbols:
         raise HTTPException(status_code=400, detail=f"'{request.symbol}' no está entre los mercados de la estrategia")
     if request.timeframe not in strategy.timeframes:
         raise HTTPException(status_code=400, detail=f"'{request.timeframe}' no está entre las temporalidades de la estrategia")
+
+    existing_active = (
+        db.query(PaperTradingSession)
+        .filter(
+            PaperTradingSession.strategy_id == strategy.id,
+            PaperTradingSession.symbol == request.symbol,
+            PaperTradingSession.timeframe == request.timeframe,
+            PaperTradingSession.status == "active",
+        )
+        .first()
+    )
+    if existing_active is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="ya hay una sesión de paper trading activa con esta estrategia, símbolo y timeframe",
+        )
 
     # Mismo merge que _run_and_persist_backtest en api/routers/strategies.py: la config
     # base de la estrategia + symbol/timeframe elegidos para esta sesión + sus reglas de

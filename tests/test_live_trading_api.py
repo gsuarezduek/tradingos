@@ -131,6 +131,44 @@ def test_create_session_rejects_symbol_not_declared_by_strategy(monkeypatch):
     assert "SOLUSDT" in response.json()["detail"]
 
 
+def test_create_session_rejects_when_strategy_is_paused(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("pausada@example.com")
+    strategy = _create_strategy(token)
+    connection = _create_connection(token, monkeypatch)
+    pause = client.patch(f"/strategies/{strategy['id']}", json={"status": "paused"}, headers=_auth_headers(token))
+    assert pause.status_code == 200
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"]),
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+    assert "pausada" in response.json()["detail"]
+
+
+def test_create_session_rejects_duplicate_active_session_same_strategy_symbol_and_connection(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("duplicada@example.com")
+    strategy = _create_strategy(token)
+    connection = _create_connection(token, monkeypatch)
+    first = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"]),
+        headers=_auth_headers(token),
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"]),
+        headers=_auth_headers(token),
+    )
+    assert second.status_code == 400
+    assert "activa" in second.json()["detail"]
+
+
 def test_create_session_rejects_another_users_connection(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token_a = _register_and_get_token("owner-conn@example.com")

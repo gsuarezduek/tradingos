@@ -129,6 +129,11 @@ def create_session(
     strategy = _get_owned_strategy(request.strategy_id, user, db)
     connection = _get_owned_connection(request.broker_connection_id, user, db)
 
+    if strategy.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail="la estrategia está pausada — activala en Estrategias antes de crear una sesión de Trading Automático",
+        )
     if not connection.trading_enabled:
         raise HTTPException(
             status_code=403,
@@ -139,6 +144,25 @@ def create_session(
     if request.timeframe not in strategy.timeframes:
         raise HTTPException(
             status_code=400, detail=f"'{request.timeframe}' no está entre las temporalidades de la estrategia"
+        )
+
+    # Sin esto, un doble click (o activarla dos veces por error) abre dos sesiones
+    # independientes operando la misma cuenta real en paralelo, cada una calculando su
+    # propio tamaño de posición sin saber de la otra — duplica la exposición real.
+    existing_active = (
+        db.query(LiveTradingSession)
+        .filter(
+            LiveTradingSession.strategy_id == strategy.id,
+            LiveTradingSession.symbol == request.symbol,
+            LiveTradingSession.broker_connection_id == connection.id,
+            LiveTradingSession.status == "active",
+        )
+        .first()
+    )
+    if existing_active is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="ya hay una sesión activa con esta estrategia, símbolo y cuenta — detenela antes de crear otra",
         )
 
     # Mismo merge que paper trading / _run_and_persist_backtest en api/routers/strategies.py.

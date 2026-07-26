@@ -176,6 +176,30 @@ def test_create_session_does_not_persist_when_first_tick_fails(monkeypatch):
         db.close()
 
 
+def test_create_session_rejects_when_strategy_is_paused(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("pausada@example.com")
+    strategy = _create_strategy(token)
+    pause = client.patch(f"/strategies/{strategy['id']}", json={"status": "paused"}, headers=_auth_headers(token))
+    assert pause.status_code == 200
+
+    response = client.post("/paper-trading/sessions", json=_session_payload(strategy["id"]), headers=_auth_headers(token))
+    assert response.status_code == 400
+    assert "pausada" in response.json()["detail"]
+
+
+def test_create_session_rejects_duplicate_active_session_same_symbol_and_timeframe(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("duplicada@example.com")
+    strategy = _create_strategy(token)
+    first = client.post("/paper-trading/sessions", json=_session_payload(strategy["id"]), headers=_auth_headers(token))
+    assert first.status_code == 200
+
+    second = client.post("/paper-trading/sessions", json=_session_payload(strategy["id"]), headers=_auth_headers(token))
+    assert second.status_code == 400
+    assert "activa" in second.json()["detail"]
+
+
 def test_create_session_allows_multiple_concurrent_active_sessions(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token = _register_and_get_token("concurrent@example.com")

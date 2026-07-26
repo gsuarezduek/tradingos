@@ -47,6 +47,23 @@ interface BacktestRunSummary {
   created_at: string;
 }
 
+export interface LinkedLiveSession {
+  id: number;
+  strategy_id: number;
+  status: string;
+  symbol: string;
+  exchange: string;
+  broker_connection_label: string;
+}
+
+export interface LinkedPaperSession {
+  id: number;
+  strategy_id: number | null;
+  status: string;
+  symbol: string;
+  timeframe: string;
+}
+
 interface Trade {
   side: string;
   entry_timestamp: string;
@@ -109,6 +126,8 @@ export function StrategyDetailClient({
   datasets,
   conditionCatalog,
   symbols,
+  initialLiveSessions,
+  initialPaperSessions,
 }: {
   strategyId: string;
   initialStrategy: StrategyDetail | null;
@@ -116,11 +135,15 @@ export function StrategyDetailClient({
   datasets: DatasetOption[];
   conditionCatalog: ConditionCategory[];
   symbols: string[];
+  initialLiveSessions: LinkedLiveSession[];
+  initialPaperSessions: LinkedPaperSession[];
 }) {
   const router = useRouter();
   const [strategy, setStrategy] = useState<StrategyDetail | null>(initialStrategy);
   const [loadError] = useState<string | null>(initialError);
   const [togglingStatus, setTogglingStatus] = useState(false);
+  const [liveSessions, setLiveSessions] = useState<LinkedLiveSession[]>(initialLiveSessions);
+  const [paperSessions, setPaperSessions] = useState<LinkedPaperSession[]>(initialPaperSessions);
 
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<FormState | null>(null);
@@ -174,17 +197,54 @@ export function StrategyDetailClient({
     if (response.ok) setStrategy(data);
   }
 
+  async function reloadSessions() {
+    const strategyIdNum = Number(strategyId);
+    try {
+      const [liveResponse, paperResponse] = await Promise.all([
+        fetch("/api/live-trading/sessions"),
+        fetch("/api/paper-trading/sessions"),
+      ]);
+      const [liveData, paperData]: [LinkedLiveSession[], LinkedPaperSession[]] = await Promise.all([
+        liveResponse.json(),
+        paperResponse.json(),
+      ]);
+      if (liveResponse.ok) setLiveSessions(liveData.filter((s) => s.strategy_id === strategyIdNum));
+      if (paperResponse.ok) setPaperSessions(paperData.filter((s) => s.strategy_id === strategyIdNum));
+    } catch {
+      // silencioso: si falla el refresh, se mantiene el estado anterior
+    }
+  }
+
   async function toggleStatus() {
     if (!strategy) return;
+    const pausing = strategy.status === "active";
+
+    if (pausing) {
+      const activeLive = liveSessions.filter((s) => s.status === "active").length;
+      const activePaper = paperSessions.filter((s) => s.status === "active").length;
+      if (activeLive > 0 || activePaper > 0) {
+        const parts: string[] = [];
+        if (activeLive > 0) parts.push(`${activeLive} sesión(es) de Trading Automático`);
+        if (activePaper > 0) parts.push(`${activePaper} sesión(es) de Paper Trading`);
+        const confirmed = window.confirm(
+          `Esta estrategia tiene ${parts.join(" y ")} activa(s). Al pausarla se van a detener automáticamente ` +
+            `(no cierra sola ninguna posición real ya abierta — eso seguís teniendo que hacerlo vos desde Operar ` +
+            `Manual si hace falta). ¿Confirmar?`,
+        );
+        if (!confirmed) return;
+      }
+    }
+
     setTogglingStatus(true);
     try {
-      const nextStatus = strategy.status === "active" ? "paused" : "active";
+      const nextStatus = pausing ? "paused" : "active";
       await fetch(`/api/strategies/${strategy.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
       await reloadStrategy();
+      await reloadSessions();
     } finally {
       setTogglingStatus(false);
     }
@@ -264,7 +324,11 @@ export function StrategyDetailClient({
 
   async function deleteStrategy() {
     if (!strategy) return;
-    if (!window.confirm(`¿Eliminar la estrategia "${strategy.name}"? Esta acción no se puede deshacer.`)) return;
+    let message = `¿Eliminar la estrategia "${strategy.name}"? Esta acción no se puede deshacer.`;
+    if (paperSessions.length > 0) {
+      message += ` Sus ${paperSessions.length} sesión(es) de Paper Trading van a quedar sin estrategia vinculada (conservan su historial).`;
+    }
+    if (!window.confirm(message)) return;
 
     setDeleting(true);
     setDeleteError(null);
@@ -378,6 +442,12 @@ export function StrategyDetailClient({
               guardada, no reemplaza a las anteriores. Hacé clic en una fila del historial para ver su curva
               de equity y sus operaciones (con precio de entrada/salida de cada una, para poder auditar que
               la estrategia esté operando como esperás).
+              <br />
+              <br />
+              &quot;Pausar&quot; ahora sí frena de verdad: si esta estrategia tiene sesiones de Trading Automático
+              o Paper Trading activas, se detienen automáticamente (te avisamos antes de confirmar, y no cierra
+              sola ninguna posición real ya abierta). Mientras esté pausada tampoco se puede crear una sesión
+              nueva con ella. Reactivarla no revive las sesiones que se frenaron — hay que crearlas de nuevo.
             </InfoGuide>
           </h1>
           <p className="text-xs text-muted">
@@ -417,6 +487,57 @@ export function StrategyDetailClient({
         <div className="rounded-3xl bg-panel p-4 text-sm text-muted">
           <span className="font-semibold text-ink">No se pudo eliminar: </span>
           {deleteError}
+        </div>
+      )}
+
+      {(liveSessions.length > 0 || paperSessions.length > 0) && (
+        <div className="rounded-3xl bg-panel p-8">
+          <h2 className="text-lg font-bold text-ink">Sesiones vinculadas</h2>
+          <p className="mt-1 text-sm text-muted">
+            Trading Automático y Paper Trading que usan esta estrategia. Pausarla detiene automáticamente las que
+            estén activas; eliminarla está bloqueado mientras tenga sesiones de Trading Automático.
+          </p>
+          <div className="mt-4 flex flex-col gap-2">
+            {liveSessions.map((s) => (
+              <div key={`live-${s.id}`} className="flex items-center justify-between rounded-xl border border-border px-4 py-2 text-sm">
+                <span className="text-ink">
+                  <span className="font-semibold">Trading Automático</span> · {s.symbol} ·{" "}
+                  <span className="text-muted">{s.broker_connection_label}</span>
+                </span>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      s.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
+                    }`}
+                  >
+                    {s.status === "active" ? "Activa" : "Detenida"}
+                  </span>
+                  <Link href={`/trading-automatico/${s.id}`} className="font-semibold text-ink underline">
+                    Ver →
+                  </Link>
+                </div>
+              </div>
+            ))}
+            {paperSessions.map((s) => (
+              <div key={`paper-${s.id}`} className="flex items-center justify-between rounded-xl border border-border px-4 py-2 text-sm">
+                <span className="text-ink">
+                  <span className="font-semibold">Paper Trading</span> · {s.symbol} · {s.timeframe}
+                </span>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      s.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
+                    }`}
+                  >
+                    {s.status === "active" ? "Activa" : "Detenida"}
+                  </span>
+                  <Link href={`/paper-trading/${s.id}`} className="font-semibold text-ink underline">
+                    Ver →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

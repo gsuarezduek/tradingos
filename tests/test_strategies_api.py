@@ -124,6 +124,69 @@ def test_list_and_detail_isolated_by_user():
     assert patch_b.status_code == 404
 
 
+def _create_broker_connection(token: str, monkeypatch) -> dict:
+    monkeypatch.setattr("tradingos.api.routers.brokers.get_spot_balances", lambda api_key, api_secret: [])
+    response = client.post(
+        "/brokers/binance/connections",
+        json={"api_key": "k", "api_secret": "s", "label": "cuenta"},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200, response.json()
+    connection = response.json()
+    toggle = client.patch(
+        f"/brokers/binance/connections/{connection['id']}",
+        json={"trading_enabled": True},
+        headers=_auth_headers(token),
+    )
+    assert toggle.status_code == 200
+    return connection
+
+
+def test_pausing_strategy_stops_active_live_and_paper_trading_sessions(monkeypatch):
+    monkeypatch.setattr("tradingos.api.routers.paper_trading.run_tick_for_session", lambda db, session: None)
+    monkeypatch.setattr("tradingos.api.routers.live_trading.run_tick_for_session", lambda db, session: None)
+
+    token = _register_and_get_token("pausar-cascada@example.com")
+    strategy = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token)).json()
+    connection = _create_broker_connection(token, monkeypatch)
+
+    paper = client.post(
+        "/paper-trading/sessions",
+        json={"strategy_id": strategy["id"], "symbol": "BTCUSDT", "timeframe": "1h", "initial_equity": 10_000.0},
+        headers=_auth_headers(token),
+    )
+    assert paper.status_code == 200
+    live = client.post(
+        "/live-trading/sessions",
+        json={
+            "strategy_id": strategy["id"],
+            "broker_connection_id": connection["id"],
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+        },
+        headers=_auth_headers(token),
+    )
+    assert live.status_code == 200
+
+    pause = client.patch(f"/strategies/{strategy['id']}", json={"status": "paused"}, headers=_auth_headers(token))
+    assert pause.status_code == 200
+    assert pause.json()["status"] == "paused"
+
+    paper_after = client.get("/paper-trading/sessions", headers=_auth_headers(token)).json()
+    live_after = client.get("/live-trading/sessions", headers=_auth_headers(token)).json()
+    assert next(s for s in paper_after if s["id"] == paper.json()["id"])["status"] == "stopped"
+    assert next(s for s in live_after if s["id"] == live.json()["id"])["status"] == "stopped"
+
+
+def test_pausing_strategy_without_active_sessions_just_changes_status():
+    token = _register_and_get_token("pausar-sin-sesiones@example.com")
+    strategy = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token)).json()
+
+    response = client.patch(f"/strategies/{strategy['id']}", json={"status": "paused"}, headers=_auth_headers(token))
+    assert response.status_code == 200
+    assert response.json()["status"] == "paused"
+
+
 def test_patch_updates_status_and_notes():
     token = _register_and_get_token("patch@example.com")
     created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))

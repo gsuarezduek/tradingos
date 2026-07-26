@@ -369,6 +369,21 @@ def update_strategy(
     strategy = _get_owned_strategy(strategy_id, user, db)
     updates = request.model_dump(exclude_unset=True)
 
+    # Pausar de verdad frena algo: hasta acá "status" era solo cosmético (ni el tick de
+    # paper trading ni el de trading en vivo lo miraban) — el usuario podía pausar una
+    # estrategia con sesiones reales corriendo y no cambiaba nada. Ahora, al pasar de
+    # "active" a "paused", detenemos toda sesión activa vinculada (mismo "stop" que ya
+    # existe por sesión — no cierra solas posiciones reales abiertas). El frontend avisa
+    # antes de confirmar cuántas sesiones se van a frenar. Reactivar la estrategia
+    # después NO revive esas sesiones: hay que crearlas de nuevo a mano.
+    if updates.get("status") == "paused" and strategy.status == "active":
+        db.query(LiveTradingSession).filter(
+            LiveTradingSession.strategy_id == strategy.id, LiveTradingSession.status == "active"
+        ).update({"status": "stopped"}, synchronize_session=False)
+        db.query(PaperTradingSession).filter(
+            PaperTradingSession.strategy_id == strategy.id, PaperTradingSession.status == "active"
+        ).update({"status": "stopped"}, synchronize_session=False)
+
     if "timeframes" in updates:
         _validate_timeframes(updates["timeframes"])
     if "entry_rules" in updates:
