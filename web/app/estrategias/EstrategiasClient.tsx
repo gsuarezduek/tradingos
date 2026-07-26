@@ -82,6 +82,10 @@ export interface SavedStrategySummary {
   timeframes: string[];
   entry_conditions: string;
   exit_conditions: string;
+  // Siempre en la forma de grupos — ver normalize_rule_groups en el backend. Se usan
+  // acá para poder precargar el formulario al "Duplicar" una estrategia.
+  entry_rules: Condition[][];
+  exit_rules: Condition[][];
   config: Record<string, unknown>;
   status: string;
   notes: string;
@@ -577,6 +581,20 @@ export function EstrategiasClient({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const filteredStrategies = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return strategies.filter((s) => {
+      if (query && !s.name.toLowerCase().includes(query)) return false;
+      if (categoryFilter !== "all" && s.category !== categoryFilter) return false;
+      if (statusFilter !== "all" && s.status !== statusFilter) return false;
+      return true;
+    });
+  }, [strategies, searchQuery, categoryFilter, statusFilter]);
+
   // El primer combo símbolo+timeframe elegido que efectivamente tiene dataset: es lo
   // que se usa para correr el primer backtest al guardar. Si no hay ninguno, no
   // dejamos guardar — evita un 400 confuso del backend por falta de dataset.
@@ -638,6 +656,35 @@ export function EstrategiasClient({
     }
   }
 
+  // Precarga el formulario de alta con los datos de una estrategia existente, como
+  // punto de partida para una variante — no llama a la API, es solo un atajo para no
+  // rearmar todo a mano. El usuario revisa/edita (típicamente el nombre) antes de
+  // confirmar "Guardar y correr backtest", que crea una estrategia nueva e independiente.
+  function cloneFromStrategy(s: SavedStrategySummary) {
+    const config = s.config as {
+      stop_loss_pct?: number | null;
+      take_profit_pct?: number | null;
+      trailing_stop_pct?: number | null;
+      risk_per_trade?: number | null;
+    };
+    setForm({
+      name: `${s.name} (copia)`,
+      category: s.category,
+      symbols: s.symbols,
+      timeframes: s.timeframes,
+      entryRules: s.entry_rules,
+      exitRules: s.exit_rules,
+      notes: s.notes,
+      stopLossPct: (config.stop_loss_pct ?? 0) * 100,
+      takeProfitPct: (config.take_profit_pct ?? 0) * 100,
+      trailingStopPct: (config.trailing_stop_pct ?? 0) * 100,
+      riskPerTrade: (config.risk_per_trade ?? 0) * 100,
+    });
+    setCreateError(null);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   const activeCount = strategies.filter((s) => s.status === "active").length;
 
   return (
@@ -666,6 +713,11 @@ export function EstrategiasClient({
               Paper Trading) — declará ahí todos los que la estrategia podría operar. Eso sí, correr un
               backtest real todavía requiere que exista un dataset cargado para ese símbolo+timeframe
               puntual; si elegís una combinación sin dataset, te avisamos antes de guardar.
+              <br />
+              <br />
+              &quot;Duplicar&quot; en la lista precarga el formulario con los datos de esa estrategia (útil
+              para armar una variante) — no modifica la original, crea una nueva e independiente al guardar.
+              Buscá por nombre o filtrá por categoría/estado si tenés muchas guardadas.
             </InfoGuide>
           </h1>
           <p className="text-sm text-muted">Guardá estrategias y corré backtests reales con historial</p>
@@ -798,6 +850,43 @@ export function EstrategiasClient({
         {strategies.length === 0 && <p className="mt-4 text-sm text-muted">Todavía no guardaste ninguna estrategia.</p>}
 
         {strategies.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nombre…"
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            />
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            >
+              <option value="all">Todas las categorías</option>
+              {CATEGORY_OPTIONS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="active">Activa</option>
+              <option value="paused">Pausada</option>
+            </select>
+          </div>
+        )}
+
+        {strategies.length > 0 && filteredStrategies.length === 0 && (
+          <p className="mt-4 text-sm text-muted">Ninguna estrategia coincide con el filtro.</p>
+        )}
+
+        {filteredStrategies.length > 0 && (
           <div className="mt-6 overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
@@ -812,7 +901,7 @@ export function EstrategiasClient({
                 </tr>
               </thead>
               <tbody>
-                {strategies.map((s) => (
+                {filteredStrategies.map((s) => (
                   <tr key={s.id} className="border-b border-border last:border-0">
                     <td className="py-3 pr-4 font-semibold text-ink">{s.name}</td>
                     <td className="py-3 pr-4 text-muted">{CATEGORY_LABELS[s.category] ?? s.category}</td>
@@ -829,9 +918,20 @@ export function EstrategiasClient({
                       {s.latest_run ? `${(s.latest_run.metrics.win_rate * 100).toLocaleString("es-AR", { maximumFractionDigits: 1 })}%` : "—"}
                     </td>
                     <td className="py-3">
-                      <Link href={`/estrategias/${s.id}`} className="text-sm font-semibold text-ink underline">
-                        Ver detalle →
-                      </Link>
+                      <div className="flex items-center gap-3">
+                        <Link href={`/estrategias/${s.id}`} className="text-sm font-semibold text-ink underline">
+                          Ver detalle →
+                        </Link>
+                        {s.strategy_type === "condition_based" && (
+                          <button
+                            type="button"
+                            onClick={() => cloneFromStrategy(s)}
+                            className="text-sm font-semibold text-muted underline"
+                          >
+                            Duplicar
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
