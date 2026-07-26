@@ -33,3 +33,22 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
         axis=1,
     ).max(axis=1)
     return true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def macd(
+    series: pd.Series, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Devuelve (línea MACD, línea de señal, histograma)."""
+    macd_line = ema(series, fast_period) - ema(series, slow_period)
+    signal_line = ema(macd_line, signal_period)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def bollinger_bands(series: pd.Series, period: int = 20, num_std: float = 2.0) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Devuelve (banda media, banda superior, banda inferior)."""
+    middle = sma(series, period)
+    std = series.rolling(window=period, min_periods=period).std()
+    upper = middle + num_std * std
+    lower = middle - num_std * std
+    return middle, upper, lower

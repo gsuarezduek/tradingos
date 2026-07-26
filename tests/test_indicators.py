@@ -1,6 +1,6 @@
 import pandas as pd
 
-from tradingos.core.indicators import atr, ema, rsi, sma
+from tradingos.core.indicators import atr, bollinger_bands, ema, macd, rsi, sma
 
 
 def test_sma_basic():
@@ -33,3 +33,30 @@ def test_atr_zero_when_no_range():
     flat = pd.Series([100.0] * 20)
     result = atr(flat, flat, flat, period=5)
     assert result.dropna().eq(0.0).all()
+
+
+def test_macd_is_zero_on_flat_series():
+    flat = pd.Series([100.0] * 60)
+    macd_line, signal_line, histogram = macd(flat, fast_period=12, slow_period=26, signal_period=9)
+    assert macd_line.dropna().eq(0.0).all()
+    assert signal_line.dropna().eq(0.0).all()
+    assert histogram.dropna().eq(0.0).all()
+
+
+def test_macd_positive_on_uptrend():
+    uptrend = pd.Series([100.0 + i for i in range(60)])
+    macd_line, _, _ = macd(uptrend, fast_period=12, slow_period=26, signal_period=9)
+    # EMA rápida reacciona más rápido que la lenta: en una tendencia sostenida al alza
+    # queda por encima -> macd_line positiva.
+    assert macd_line.dropna().iloc[-1] > 0
+
+
+def test_bollinger_bands_widen_with_volatility():
+    flat = pd.Series([100.0] * 25)
+    middle, upper, lower = bollinger_bands(flat, period=20, num_std=2.0)
+    assert upper.dropna().eq(middle.dropna()).all()
+    assert lower.dropna().eq(middle.dropna()).all()
+
+    volatile = pd.Series([100.0, 110.0] * 13)
+    _, upper_v, lower_v = bollinger_bands(volatile, period=20, num_std=2.0)
+    assert (upper_v.dropna() > lower_v.dropna()).all()

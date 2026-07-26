@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tradingos.core.conditions import Condition, compute_required_emas, evaluate_ema_condition
+from tradingos.core.conditions import Condition, compute_required_indicators, evaluate_condition
 from tradingos.core.strategy import Strategy, StrategyConfig, StrategyContext, register_strategy
 from tradingos.core.types import Side, Signal, SignalAction
 
@@ -15,8 +15,9 @@ class ConditionBasedStrategy(Strategy):
     posición solo se cierra por SL/TP/trailing, que el motor aplica de forma
     centralizada igual que para el resto de las estrategias.
 
-    Long-only por ahora (mismo alcance que MovingAverageCrossoverStrategy) y solo la
-    categoría EMA es ejecutable; el resto queda validado en la capa de API.
+    Long-only por ahora (mismo alcance que MovingAverageCrossoverStrategy). Las
+    categorías disponibles hoy son EMA, RSI, Volumen, Acción del Precio y ATR; el resto
+    queda validado en la capa de API.
     """
 
     def __init__(self, config: StrategyConfig) -> None:
@@ -26,17 +27,17 @@ class ConditionBasedStrategy(Strategy):
         self._exit_rules = [Condition.model_validate(c) for c in config.exit_rules]
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
-        return compute_required_emas(data, self._entry_rules + self._exit_rules)
+        return compute_required_indicators(data, self._entry_rules + self._exit_rules)
 
     def on_bar(self, context: StrategyContext) -> Signal | None:
         if context.current_index == 0:
             return None
 
         if context.position is None:
-            if self._entry_rules and all(evaluate_ema_condition(c, context) for c in self._entry_rules):
+            if self._entry_rules and all(evaluate_condition(c, context) for c in self._entry_rules):
                 return Signal(action=SignalAction.OPEN, side=Side.LONG)
             return None
 
-        if self._exit_rules and all(evaluate_ema_condition(c, context) for c in self._exit_rules):
+        if self._exit_rules and all(evaluate_condition(c, context) for c in self._exit_rules):
             return Signal(action=SignalAction.CLOSE)
         return None

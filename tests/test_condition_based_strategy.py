@@ -3,7 +3,16 @@ import pandas as pd
 import tradingos.strategies  # noqa: F401  (registra condition_based y ma_crossover)
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
-from tradingos.core.conditions import Condition, evaluate_ema_condition
+from tradingos.core.conditions import (
+    Condition,
+    evaluate_atr_condition,
+    evaluate_bollinger_condition,
+    evaluate_ema_condition,
+    evaluate_macd_condition,
+    evaluate_price_action_condition,
+    evaluate_rsi_condition,
+    evaluate_volume_condition,
+)
 from tradingos.core.strategy import StrategyConfig, StrategyContext, get_strategy
 
 
@@ -65,6 +74,187 @@ def test_distance_below_pct():
 
     assert evaluate_ema_condition(near, _context(history, 0)) is True
     assert evaluate_ema_condition(far, _context(history, 0)) is False
+
+
+def test_rsi_conditions():
+    rsi_values = [55.0, 75.0, 25.0, 45.0, 50.0]
+    history = pd.DataFrame({"close": [0.0] * len(rsi_values), "rsi_14": rsi_values})
+
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_above_70"), _context(history, 1)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_below_30"), _context(history, 2)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_above_50"), _context(history, 0)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_below_50"), _context(history, 2)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_between_40_60"), _context(history, 3)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_between_40_60"), _context(history, 1)) is False
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_increasing"), _context(history, 0)) is False
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_increasing"), _context(history, 1)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_decreasing"), _context(history, 2)) is True
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_cross_up_30"), _context(history, 2)) is False
+    cross_history = pd.DataFrame({"close": [0.0, 0.0], "rsi_14": [25.0, 35.0]})
+    assert evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_cross_up_30"), _context(cross_history, 1)) is True
+    cross_down_history = pd.DataFrame({"close": [0.0, 0.0], "rsi_14": [75.0, 65.0]})
+    assert (
+        evaluate_rsi_condition(Condition(category="rsi", condition_type="rsi_cross_down_70"), _context(cross_down_history, 1))
+        is True
+    )
+
+
+def test_volume_conditions():
+    history = pd.DataFrame(
+        {
+            "close": [0.0] * 4,
+            "volume": [100.0, 500.0, 200.0, 50.0],
+            "volume_avg_20": [200.0, 200.0, 200.0, 200.0],
+            "volume_highest_10": [100.0, 500.0, 500.0, 500.0],
+        }
+    )
+
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_above_avg_20"), _context(history, 1)) is True
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_below_avg"), _context(history, 3)) is True
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_2x_avg"), _context(history, 1)) is True
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_2x_avg"), _context(history, 2)) is False
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_highest_of_10"), _context(history, 1)) is True
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_highest_of_10"), _context(history, 2)) is False
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_increasing"), _context(history, 0)) is False
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_increasing"), _context(history, 1)) is True
+    assert evaluate_volume_condition(Condition(category="volume", condition_type="volume_decreasing"), _context(history, 2)) is True
+
+
+def test_price_action_conditions():
+    history = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 105.0],
+            "high": [110.0, 108.0, 120.0],
+            "low": [95.0, 96.0, 104.0],
+            "close": [105.0, 90.0, 115.0],
+            "rolling_high_20": [110.0, 110.0, 110.0],
+            "rolling_low_20": [95.0, 95.0, 95.0],
+        }
+    )
+
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="bullish_candle"), _context(history, 0)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="bearish_candle"), _context(history, 1)) is True
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="breaks_high_20"), _context(history, 0)) is False
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="breaks_high_20"), _context(history, 2)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="breaks_low_20"), _context(history, 2)) is False
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="higher_high"), _context(history, 2)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="higher_low"), _context(history, 2)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="lower_high"), _context(history, 1)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="lower_low"), _context(history, 1)) is False
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="close_above_prev_high"), _context(history, 2)) is True
+    assert evaluate_price_action_condition(Condition(category="price_action", condition_type="close_below_prev_low"), _context(history, 1)) is True
+
+
+def test_atr_conditions():
+    history = pd.DataFrame(
+        {
+            "close": [0.0, 0.0, 0.0],
+            "atr_14": [1.0, 1.5, 1.2],
+            "atr_avg_14": [1.3, 1.3, 1.3],
+        }
+    )
+
+    assert evaluate_atr_condition(Condition(category="atr", condition_type="atr_above_avg"), _context(history, 1)) is True
+    assert evaluate_atr_condition(Condition(category="atr", condition_type="atr_below_avg"), _context(history, 0)) is True
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_atr_condition(Condition(category="atr", condition_type="atr_increasing"), _context(history, 0)) is False
+    assert evaluate_atr_condition(Condition(category="atr", condition_type="atr_increasing"), _context(history, 1)) is True
+    assert evaluate_atr_condition(Condition(category="atr", condition_type="atr_decreasing"), _context(history, 2)) is True
+
+
+def test_macd_conditions():
+    history = pd.DataFrame(
+        {
+            "close": [0.0] * 5,
+            "macd_line": [1.0, -1.0, 2.0, 2.5, 0.5],
+            "macd_signal": [0.5, 0.5, 1.0, 1.0, 1.0],
+            "macd_hist": [0.5, -1.5, 1.0, 1.5, -0.5],
+        }
+    )
+
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_above_signal"), _context(history, 0)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_below_signal"), _context(history, 1)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_histogram_positive"), _context(history, 0)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_histogram_negative"), _context(history, 1)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_above_zero"), _context(history, 0)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_below_zero"), _context(history, 1)) is True
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_bullish_cross"), _context(history, 0)) is False
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_bullish_cross"), _context(history, 2)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_bearish_cross"), _context(history, 4)) is True
+    assert evaluate_macd_condition(Condition(category="macd", condition_type="macd_histogram_increasing"), _context(history, 2)) is True
+
+
+def test_bollinger_conditions():
+    history = pd.DataFrame(
+        {
+            "high": [102.0, 106.0, 94.0, 100.0],
+            "low": [98.0, 104.0, 90.0, 96.0],
+            "close": [100.0, 106.0, 100.0, 101.0],
+            "bb_upper": [105.0, 105.0, 105.0, 105.0],
+            "bb_lower": [95.0, 95.0, 95.0, 95.0],
+            "bb_width": [0.08, 0.12, 0.08, 0.12],
+            "bb_width_avg_20": [0.10, 0.10, 0.10, 0.10],
+        }
+    )
+
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="touches_upper_band"), _context(history, 1)) is True
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="touches_lower_band"), _context(history, 2)) is True
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="leaves_band"), _context(history, 1)) is True
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="leaves_band"), _context(history, 0)) is False
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="squeeze"), _context(history, 0)) is True
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="expansion"), _context(history, 1)) is True
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="returns_inside_band"), _context(history, 0)) is False
+    assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="returns_inside_band"), _context(history, 2)) is True
+
+
+def test_condition_based_strategy_combines_macd_and_bollinger_conditions(synthetic_ohlcv):
+    config = StrategyConfig(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        stop_loss_pct=0.05,
+        risk_per_trade=0.01,
+        entry_rules=[
+            {"category": "macd", "condition_type": "macd_bullish_cross", "params": {}},
+            {"category": "bollinger", "condition_type": "touches_lower_band", "params": {}},
+        ],
+        exit_rules=[{"category": "macd", "condition_type": "macd_bearish_cross", "params": {}}],
+    )
+    strategy_cls = get_strategy("condition_based")
+    engine = BacktestEngine(strategy_cls(config), SimulatedBroker(BrokerSimConfig()), initial_equity=10_000.0)
+
+    result = engine.run(synthetic_ohlcv)
+
+    # No se afirma un número de trades específico, solo que el motor generalizado corre
+    # sin romperse mezclando MACD y Bollinger.
+    assert isinstance(result.trades, list)
+    assert not result.equity_curve.empty
+
+
+def test_condition_based_strategy_combines_ema_and_rsi_conditions(synthetic_ohlcv):
+    config = StrategyConfig(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        stop_loss_pct=0.05,
+        risk_per_trade=0.01,
+        entry_rules=[
+            {"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}},
+            {"category": "rsi", "condition_type": "rsi_below_50", "params": {}},
+        ],
+        exit_rules=[{"category": "rsi", "condition_type": "rsi_above_70", "params": {}}],
+    )
+    strategy_cls = get_strategy("condition_based")
+    engine = BacktestEngine(strategy_cls(config), SimulatedBroker(BrokerSimConfig()), initial_equity=10_000.0)
+
+    result = engine.run(synthetic_ohlcv)
+
+    # No se afirma un número de trades específico (depende de la combinación exacta),
+    # solo que el motor generalizado corre sin romperse mezclando dos categorías.
+    assert isinstance(result.trades, list)
+    assert not result.equity_curve.empty
 
 
 def test_condition_based_strategy_produces_trades_on_synthetic_data(synthetic_ohlcv):

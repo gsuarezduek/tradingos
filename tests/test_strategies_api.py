@@ -287,7 +287,13 @@ def test_conditions_catalog_is_public_and_lists_ema_as_available():
     assert response.status_code == 200
     catalog = {c["category"]: c for c in response.json()}
     assert catalog["ema"]["available"] is True
-    assert catalog["rsi"]["available"] is False
+    assert catalog["rsi"]["available"] is True
+    assert catalog["volume"]["available"] is True
+    assert catalog["price_action"]["available"] is True
+    assert catalog["atr"]["available"] is True
+    assert catalog["macd"]["available"] is True
+    assert catalog["bollinger"]["available"] is True
+    assert catalog["adx"]["available"] is False
     assert any(t["type"] == "cross_above" for t in catalog["ema"]["condition_types"])
 
 
@@ -314,12 +320,12 @@ def test_create_condition_based_strategy_requires_entry_rules():
 def test_create_condition_based_strategy_rejects_unavailable_category():
     token = _register_and_get_token("categoria-no-disponible@example.com")
     payload = _condition_based_payload(
-        entry_rules=[{"category": "rsi", "condition_type": "rsi_above_70", "params": {}}]
+        entry_rules=[{"category": "adx", "condition_type": "adx_above_25", "params": {}}]
     )
     response = client.post("/strategies", json=payload, headers=_auth_headers(token))
 
     assert response.status_code == 400
-    assert "rsi" in response.json()["detail"]
+    assert "adx" in response.json()["detail"]
 
 
 def test_update_condition_based_strategy_regenerates_description():
