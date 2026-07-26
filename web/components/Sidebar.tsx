@@ -34,7 +34,7 @@ const modules: { label: string; icon: LucideIcon; href?: string }[] = [
   { label: "Conexión con Exchanges", icon: Plug, href: "/conexiones" },
   { label: "Operar Manual", icon: Send, href: "/operar" },
   { label: "Paper Trading", icon: FileStack, href: "/paper-trading" },
-  { label: "Trading Automático", icon: Bot },
+  { label: "Trading Automático", icon: Bot, href: "/trading-automatico" },
 ];
 
 export function Sidebar({ hasSession }: { hasSession: boolean }) {

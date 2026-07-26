@@ -34,6 +34,9 @@ from tradingos.db.session import get_db
 router = APIRouter(prefix="/brokers/{exchange}", tags=["brokers"])
 
 _APIErrors = (BinanceAPIError, MexcAPIError, BitgetAPIError, BingxAPIError)
+# Alias público: live_trading/tick.py no es un router HTTP y necesita capturar estos
+# errores sin depender de nombres privados de este módulo.
+EXCHANGE_API_ERRORS = _APIErrors
 
 BalanceFn = Callable[[str, str, "str | None"], list[dict]]
 
@@ -139,6 +142,11 @@ def _get_exchange_spec(exchange: str) -> ExchangeSpec:
         return _EXCHANGES[exchange]
     except KeyError:
         raise HTTPException(status_code=404, detail=f"exchange no soportado: {exchange}") from None
+
+
+def get_exchange_spec(exchange: str) -> ExchangeSpec | None:
+    """Acceso público (sin HTTPException) para módulos no-HTTP, ej. live_trading/tick.py."""
+    return _EXCHANGES.get(exchange)
 
 
 def _fetch_section(fetch_fn: BalanceFn, api_key: str, api_secret: str, passphrase: str | None) -> dict:

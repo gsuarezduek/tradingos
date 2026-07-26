@@ -32,6 +32,9 @@ class User(Base):
     saved_strategies: Mapped[list["SavedStrategy"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    live_trading_sessions: Mapped[list["LiveTradingSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class BrokerConnection(Base):
@@ -51,6 +54,7 @@ class BrokerConnection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="broker_connections")
+    live_trading_sessions: Mapped[list["LiveTradingSession"]] = relationship(back_populates="broker_connection")
 
 
 class PaperTradingSession(Base):
@@ -143,6 +147,7 @@ class SavedStrategy(Base):
     # Sin cascade delete: no hay endpoint para borrar una SavedStrategy todavía, y si
     # llegara a agregarse, el historial de paper trading no debería desaparecer con ella.
     paper_trading_sessions: Mapped[list["PaperTradingSession"]] = relationship(back_populates="saved_strategy")
+    live_trading_sessions: Mapped[list["LiveTradingSession"]] = relationship(back_populates="saved_strategy")
 
 
 class StrategyBacktestRun(Base):
@@ -178,6 +183,11 @@ class LiveOrder(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     broker_connection_id: Mapped[int] = mapped_column(ForeignKey("broker_connections.id"), index=True)
+    # Null para las órdenes manuales de "Operar Manual"; seteado cuando la orden la
+    # generó el motor de trading en vivo (ver live_trading/tick.py) por cuenta propia.
+    live_trading_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("live_trading_sessions.id"), nullable=True, index=True
+    )
     exchange: Mapped[str] = mapped_column(String(32))
     symbol: Mapped[str] = mapped_column(String(32))
     side: Mapped[str] = mapped_column(String(8))
@@ -196,3 +206,67 @@ class LiveOrder(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    live_trading_session: Mapped["LiveTradingSession | None"] = relationship(back_populates="orders")
+
+
+class LiveTradingSession(Base):
+    """Una SavedStrategy operando sola contra una cuenta real (trading_enabled=True).
+
+    A diferencia de PaperTradingSession, el tick no puede "recalcular todo de nuevo":
+    una orden real ya ejecutada es irreversible. El motor (live_trading/tick.py) resuelve
+    esto re-corriendo el motor de backtest sobre la misma ventana que paper trading, pero
+    solo actúa sobre la diferencia entre `current_position` (lo que de verdad tenemos
+    abierto) y lo que el replay dice que debería estar abierto ahora — ver el docstring
+    del módulo para el detalle y las limitaciones conocidas.
+    """
+
+    __tablename__ = "live_trading_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("saved_strategies.id"), index=True)
+    broker_connection_id: Mapped[int] = mapped_column(ForeignKey("broker_connections.id"), index=True)
+    # Copias al momento de crear la sesión (mismo criterio que PaperTradingSession.strategy
+    # y StrategyBacktestRun.config_snapshot): la sesión no cambia de comportamiento si la
+    # estrategia o la conexión se editan después.
+    exchange: Mapped[str] = mapped_column(String(32))
+    strategy: Mapped[str] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    # Lo que la sesión cree tener realmente abierto en el exchange ahora mismo:
+    # {side, entry_price, quantity, stop_loss, take_profit, entry_timestamp, opened_at}.
+    # entry_timestamp es la marca de la barra simulada (no el reloj real) — es la clave
+    # de identidad que el tick usa para saber si sigue siendo "la misma" posición entre
+    # corridas; opened_at sí es el timestamp real en que se mandó la orden. Null si está flat.
+    current_position: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    last_tick_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="live_trading_sessions")
+    saved_strategy: Mapped["SavedStrategy"] = relationship(back_populates="live_trading_sessions")
+    broker_connection: Mapped["BrokerConnection"] = relationship(back_populates="live_trading_sessions")
+    orders: Mapped[list["LiveOrder"]] = relationship(back_populates="live_trading_session")
+    trades: Mapped[list["LiveTrade"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class LiveTrade(Base):
+    """Operación real ya cerrada por una LiveTradingSession — mismo shape que PaperTrade,
+    pero entry_timestamp/exit_timestamp acá son tiempos reales (cuándo se mandaron las
+    órdenes), no marcas de barra simulada."""
+
+    __tablename__ = "live_trades"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("live_trading_sessions.id"), index=True)
+    side: Mapped[str] = mapped_column(String(8))
+    entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exit_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[float] = mapped_column(Float)
+    pnl: Mapped[float] = mapped_column(Float)
+
+    session: Mapped["LiveTradingSession"] = relationship(back_populates="trades")
