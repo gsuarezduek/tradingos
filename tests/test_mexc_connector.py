@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from tradingos.connectors.mexc import MexcAPIError, get_spot_balances, get_spot_usdt_prices
+from tradingos.connectors.mexc import MexcAPIError, get_spot_balances, get_spot_usdt_prices, place_market_order
 
 
 class _FakeResponse:
@@ -65,3 +65,27 @@ def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
 
     assert get_spot_usdt_prices() == {"BTC": 64397.84, "METAL": 0.10299}
+
+
+def test_place_market_order_sends_expected_params(monkeypatch):
+    seen = {}
+
+    def _fake_post(url, headers=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        return _FakeResponse(200, {"symbol": "BTCUSDT", "orderId": 999, "status": "FILLED"})
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+    result = place_market_order("my-key", "my-secret", "BTCUSDT", "sell", 0.5)
+
+    assert seen["headers"] == {"X-MEXC-APIKEY": "my-key"}
+    assert "side=SELL" in seen["url"]
+    assert "quantity=0.5" in seen["url"]
+    assert result == {"exchange_order_id": "999", "raw": {"symbol": "BTCUSDT", "orderId": 999, "status": "FILLED"}}
+
+
+def test_place_market_order_raises_on_error(monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeResponse(400, {"code": 10072, "msg": "Api key info invalid"}))
+
+    with pytest.raises(MexcAPIError, match="Api key info invalid"):
+        place_market_order("key", "secret", "BTCUSDT", "buy", 1.0)

@@ -13,18 +13,22 @@ from tradingos.connectors.binance import (
     get_futures_usdm_balances,
     get_spot_balances,
     get_spot_usdt_prices as binance_get_spot_usdt_prices,
+    place_market_order as binance_place_market_order,
 )
 from tradingos.connectors.bingx import BingxAPIError
 from tradingos.connectors.bingx import get_spot_balances as bingx_get_spot_balances
 from tradingos.connectors.bingx import get_spot_usdt_prices as bingx_get_spot_usdt_prices
+from tradingos.connectors.bingx import place_market_order as bingx_place_market_order
 from tradingos.connectors.bitget import BitgetAPIError
 from tradingos.connectors.bitget import get_spot_balances as bitget_get_spot_balances
 from tradingos.connectors.bitget import get_spot_usdt_prices as bitget_get_spot_usdt_prices
+from tradingos.connectors.bitget import place_market_order as bitget_place_market_order
 from tradingos.connectors.mexc import MexcAPIError
 from tradingos.connectors.mexc import get_spot_balances as mexc_get_spot_balances
 from tradingos.connectors.mexc import get_spot_usdt_prices as mexc_get_spot_usdt_prices
+from tradingos.connectors.mexc import place_market_order as mexc_place_market_order
 from tradingos.db import crypto
-from tradingos.db.models import BrokerConnection, User
+from tradingos.db.models import BrokerConnection, LiveOrder, User
 from tradingos.db.session import get_db
 
 router = APIRouter(prefix="/brokers/{exchange}", tags=["brokers"])
@@ -54,6 +58,25 @@ def _bingx_spot(api_key: str, api_secret: str, passphrase: str | None) -> list[d
     return bingx_get_spot_balances(api_key, api_secret)
 
 
+OrderFn = Callable[[str, str, "str | None", str, str, float], dict]
+
+
+def _binance_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
+    return binance_place_market_order(api_key, api_secret, symbol, side, quantity)
+
+
+def _mexc_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
+    return mexc_place_market_order(api_key, api_secret, symbol, side, quantity)
+
+
+def _bitget_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
+    return bitget_place_market_order(api_key, api_secret, passphrase or "", symbol, side, quantity)
+
+
+def _bingx_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
+    return bingx_place_market_order(api_key, api_secret, symbol, side, quantity)
+
+
 # Wrappers indirectos (en vez de pasar las funciones importadas directo a
 # ExchangeSpec) para que los tests puedan mockear por nombre de módulo, igual que
 # con spot_fn/futures_fn de arriba.
@@ -78,6 +101,7 @@ class ExchangeSpec:
     display_name: str
     spot_fn: BalanceFn
     usdt_prices_fn: Callable[[], dict[str, float]]
+    order_fn: OrderFn
     futures_fn: BalanceFn | None = None
     requires_passphrase: bool = False
 
@@ -88,13 +112,25 @@ class ExchangeSpec:
 # arriesga reportar un balance o PnL mal calculado en una integración financiera real.
 _EXCHANGES: dict[str, ExchangeSpec] = {
     "binance": ExchangeSpec(
-        display_name="Binance", spot_fn=_binance_spot, futures_fn=_binance_futures, usdt_prices_fn=_binance_usdt_prices
+        display_name="Binance",
+        spot_fn=_binance_spot,
+        futures_fn=_binance_futures,
+        usdt_prices_fn=_binance_usdt_prices,
+        order_fn=_binance_order,
     ),
-    "mexc": ExchangeSpec(display_name="MEXC", spot_fn=_mexc_spot, usdt_prices_fn=_mexc_usdt_prices),
+    "mexc": ExchangeSpec(
+        display_name="MEXC", spot_fn=_mexc_spot, usdt_prices_fn=_mexc_usdt_prices, order_fn=_mexc_order
+    ),
     "bitget": ExchangeSpec(
-        display_name="Bitget", spot_fn=_bitget_spot, requires_passphrase=True, usdt_prices_fn=_bitget_usdt_prices
+        display_name="Bitget",
+        spot_fn=_bitget_spot,
+        requires_passphrase=True,
+        usdt_prices_fn=_bitget_usdt_prices,
+        order_fn=_bitget_order,
     ),
-    "bingx": ExchangeSpec(display_name="BingX", spot_fn=_bingx_spot, usdt_prices_fn=_bingx_usdt_prices),
+    "bingx": ExchangeSpec(
+        display_name="BingX", spot_fn=_bingx_spot, usdt_prices_fn=_bingx_usdt_prices, order_fn=_bingx_order
+    ),
 }
 
 
@@ -178,11 +214,16 @@ class ConnectionResponse(BaseModel):
     exchange: str
     label: str
     created_at: str
+    trading_enabled: bool
 
 
 def _to_response(connection: BrokerConnection) -> ConnectionResponse:
     return ConnectionResponse(
-        id=connection.id, exchange=connection.exchange, label=connection.label, created_at=connection.created_at.isoformat()
+        id=connection.id,
+        exchange=connection.exchange,
+        label=connection.label,
+        created_at=connection.created_at.isoformat(),
+        trading_enabled=connection.trading_enabled,
     )
 
 
@@ -260,3 +301,119 @@ def connection_balances(
     api_secret = crypto.decrypt(connection.api_secret_encrypted)
     passphrase = crypto.decrypt(connection.passphrase_encrypted) if connection.passphrase_encrypted else None
     return _fetch_balances(spec, api_key, api_secret, passphrase)
+
+
+class UpdateConnectionRequest(BaseModel):
+    trading_enabled: bool
+
+
+@router.patch("/connections/{connection_id}", response_model=ConnectionResponse)
+def update_connection(
+    exchange: str,
+    connection_id: int,
+    request: UpdateConnectionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ConnectionResponse:
+    """Hoy solo togglea `trading_enabled` — arranca en False, hay que habilitarlo
+    explícitamente antes de poder enviar órdenes reales con esta conexión."""
+    _get_exchange_spec(exchange)
+    connection = _get_owned_connection(exchange, connection_id, user, db)
+    connection.trading_enabled = request.trading_enabled
+    db.commit()
+    db.refresh(connection)
+    return _to_response(connection)
+
+
+class CreateOrderRequest(BaseModel):
+    symbol: str
+    side: str
+    quantity: float
+
+
+class OrderResponse(BaseModel):
+    id: int
+    exchange: str
+    symbol: str
+    side: str
+    quantity: float
+    status: str
+    exchange_order_id: str | None
+    error_message: str | None
+    created_at: str
+
+
+def _to_order_response(order: LiveOrder) -> OrderResponse:
+    return OrderResponse(
+        id=order.id,
+        exchange=order.exchange,
+        symbol=order.symbol,
+        side=order.side,
+        quantity=order.quantity,
+        status=order.status,
+        exchange_order_id=order.exchange_order_id,
+        error_message=order.error_message,
+        created_at=order.created_at.isoformat(),
+    )
+
+
+@router.post("/connections/{connection_id}/orders", response_model=OrderResponse)
+def create_order(
+    exchange: str,
+    connection_id: int,
+    request: CreateOrderRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    spec = _get_exchange_spec(exchange)
+    connection = _get_owned_connection(exchange, connection_id, user, db)
+
+    if not connection.trading_enabled:
+        raise HTTPException(status_code=403, detail="esta conexión no tiene trading habilitado")
+    side = request.side.lower()
+    if side not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="side debe ser 'buy' o 'sell'")
+    if request.quantity <= 0:
+        raise HTTPException(status_code=400, detail="quantity debe ser mayor a cero")
+
+    api_key = crypto.decrypt(connection.api_key_encrypted)
+    api_secret = crypto.decrypt(connection.api_secret_encrypted)
+    passphrase = crypto.decrypt(connection.passphrase_encrypted) if connection.passphrase_encrypted else None
+
+    order = LiveOrder(
+        user_id=user.id,
+        broker_connection_id=connection.id,
+        exchange=exchange,
+        symbol=request.symbol,
+        side=side,
+        quantity=request.quantity,
+    )
+    try:
+        result = spec.order_fn(api_key, api_secret, passphrase, request.symbol, side, request.quantity)
+    except _APIErrors as exc:
+        order.status = "rejected"
+        order.error_message = str(exc)
+    else:
+        order.status = "submitted"
+        order.exchange_order_id = result.get("exchange_order_id")
+        order.raw_response = result.get("raw")
+
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return _to_order_response(order)
+
+
+@router.get("/connections/{connection_id}/orders", response_model=list[OrderResponse])
+def list_orders(
+    exchange: str, connection_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> list[OrderResponse]:
+    _get_exchange_spec(exchange)
+    _get_owned_connection(exchange, connection_id, user, db)
+    orders = (
+        db.query(LiveOrder)
+        .filter(LiveOrder.broker_connection_id == connection_id, LiveOrder.user_id == user.id)
+        .order_by(LiveOrder.created_at.desc())
+        .all()
+    )
+    return [_to_order_response(o) for o in orders]

@@ -23,13 +23,14 @@ def _sign(params: dict[str, str], api_secret: str) -> tuple[str, str]:
     return query, signature
 
 
-def _signed_get(path: str, api_key: str, api_secret: str) -> dict:
-    params = {"timestamp": str(int(time.time() * 1000))}
+def _signed_request(method: str, path: str, api_key: str, api_secret: str, extra_params: dict[str, str] | None = None) -> dict:
+    params = {**(extra_params or {}), "timestamp": str(int(time.time() * 1000))}
     query, signature = _sign(params, api_secret)
     url = f"{BASE_URL}{path}?{query}&signature={signature}"
 
+    request_fn = requests.get if method == "GET" else requests.post
     try:
-        response = requests.get(url, headers={"X-BX-APIKEY": api_key}, timeout=_TIMEOUT)
+        response = request_fn(url, headers={"X-BX-APIKEY": api_key}, timeout=_TIMEOUT)
     except requests.RequestException as exc:
         raise BingxAPIError(f"no se pudo conectar con BingX: {exc}") from exc
 
@@ -65,13 +66,25 @@ def _public_get(url: str) -> dict:
 
 def get_spot_balances(api_key: str, api_secret: str) -> list[dict]:
     """Balances SPOT (free + locked) con saldo mayor a cero."""
-    body = _signed_get("/openApi/spot/v1/account/balance", api_key, api_secret)
+    body = _signed_request("GET", "/openApi/spot/v1/account/balance", api_key, api_secret)
     balances = []
     for b in body["data"]["balances"]:
         free, locked = float(b["free"]), float(b["locked"])
         if free > 0 or locked > 0:
             balances.append({"asset": b["asset"], "free": free, "locked": locked, "total": free + locked})
     return balances
+
+
+def place_market_order(api_key: str, api_secret: str, symbol: str, side: str, quantity: float) -> dict:
+    """Envía una orden MARKET spot real. `quantity` es la cantidad del activo base
+    (sirve igual para compra y venta). `symbol` viene concatenado (ej. "BTCUSDT",
+    misma convención que el resto de la app) — BingX necesita el guion, se traduce
+    acá adentro (ej. "BTC-USDT"), no se expone hacia afuera."""
+    bingx_symbol = f"{symbol[:-len('USDT')]}-USDT" if symbol.endswith("USDT") else symbol
+    params = {"symbol": bingx_symbol, "side": side.upper(), "type": "MARKET", "quantity": str(quantity)}
+    body = _signed_request("POST", "/openApi/spot/v1/trade/order", api_key, api_secret, params)
+    order_id = body.get("data", {}).get("orderId", "")
+    return {"exchange_order_id": str(order_id), "raw": body}
 
 
 def get_spot_usdt_prices() -> dict[str, float]:

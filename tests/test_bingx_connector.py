@@ -1,7 +1,7 @@
 import pytest
 import requests
 
-from tradingos.connectors.bingx import BingxAPIError, get_spot_balances, get_spot_usdt_prices
+from tradingos.connectors.bingx import BingxAPIError, get_spot_balances, get_spot_usdt_prices, place_market_order
 
 
 class _FakeResponse:
@@ -74,3 +74,28 @@ def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
 
     assert get_spot_usdt_prices() == {"BTC": 64386.67, "ETH": 1873.69}
+
+
+def test_place_market_order_translates_symbol_to_hyphenated_form(monkeypatch):
+    seen = {}
+
+    def _fake_post(url, headers=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        return _FakeResponse(200, {"code": 0, "data": {"orderId": 555}})
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+    result = place_market_order("my-key", "my-secret", "BTCUSDT", "buy", 0.001)
+
+    assert seen["headers"] == {"X-BX-APIKEY": "my-key"}
+    assert "symbol=BTC-USDT" in seen["url"]
+    assert "side=BUY" in seen["url"]
+    assert "type=MARKET" in seen["url"]
+    assert result == {"exchange_order_id": "555", "raw": {"code": 0, "data": {"orderId": 555}}}
+
+
+def test_place_market_order_raises_on_error(monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _FakeResponse(200, {"code": 100413, "msg": "Incorrect apiKey"}))
+
+    with pytest.raises(BingxAPIError, match="Incorrect apiKey"):
+        place_market_order("key", "secret", "BTCUSDT", "sell", 1.0)

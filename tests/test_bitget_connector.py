@@ -5,7 +5,7 @@ import hmac
 import pytest
 import requests
 
-from tradingos.connectors.bitget import BitgetAPIError, _sign, get_spot_balances, get_spot_usdt_prices
+from tradingos.connectors.bitget import BitgetAPIError, _sign, get_spot_balances, get_spot_usdt_prices, place_market_order
 
 
 class _FakeResponse:
@@ -90,3 +90,51 @@ def test_get_spot_usdt_prices_filters_and_indexes_by_asset(monkeypatch):
     monkeypatch.setattr(requests, "get", lambda *a, **k: _FakeResponse(200, payload))
 
     assert get_spot_usdt_prices() == {"BTC": 64395.3, "TRX": 0.33074}
+
+
+def test_place_market_order_buy_converts_quantity_to_cost_using_current_price(monkeypatch):
+    # La particularidad real de Bitget: para MARKET BUY, "size" es el costo en USDT
+    # a gastar (quantity * precio), no la cantidad del activo base.
+    price_payload = {"code": "00000", "data": [{"symbol": "BTCUSDT", "lastPr": "50000"}]}
+    seen = {}
+
+    def _fake_get(url, timeout=None):
+        return _FakeResponse(200, price_payload)
+
+    def _fake_post(url, headers=None, data=None, timeout=None):
+        seen["body"] = data
+        seen["headers"] = headers
+        return _FakeResponse(200, {"code": "00000", "data": {"orderId": "777"}})
+
+    monkeypatch.setattr(requests, "get", _fake_get)
+    monkeypatch.setattr(requests, "post", _fake_post)
+
+    result = place_market_order("key", "secret", "passphrase", "BTCUSDT", "buy", 0.002)
+
+    assert '"size":"100.0"' in seen["body"]
+    assert '"side":"buy"' in seen["body"]
+    assert '"orderType":"market"' in seen["body"]
+    assert result == {"exchange_order_id": "777", "raw": {"code": "00000", "data": {"orderId": "777"}}}
+
+
+def test_place_market_order_sell_uses_quantity_directly(monkeypatch):
+    seen = {}
+
+    def _fake_post(url, headers=None, data=None, timeout=None):
+        seen["body"] = data
+        return _FakeResponse(200, {"code": "00000", "data": {"orderId": "778"}})
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+    place_market_order("key", "secret", "passphrase", "BTCUSDT", "sell", 0.5)
+
+    assert '"size":"0.5"' in seen["body"]
+    assert '"side":"sell"' in seen["body"]
+
+
+def test_place_market_order_raises_on_error(monkeypatch):
+    monkeypatch.setattr(
+        requests, "post", lambda *a, **k: _FakeResponse(200, {"code": "40012", "msg": "apikey/password is incorrect"})
+    )
+
+    with pytest.raises(BitgetAPIError, match="apikey/password is incorrect"):
+        place_market_order("key", "secret", "passphrase", "BTCUSDT", "sell", 1.0)

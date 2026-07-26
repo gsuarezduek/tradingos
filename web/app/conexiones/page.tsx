@@ -36,7 +36,26 @@ async function fetchInitialConnections(): Promise<{ connections: Connection[]; e
   }
 }
 
+// Lista de símbolos de Binance para el selector de "Operar"; si falla, el
+// formulario de orden sigue funcionando con los símbolos populares hardcodeados.
+async function fetchSymbols(): Promise<string[]> {
+  const token = await getSessionToken();
+  if (!token) return [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/paper-trading/symbols`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function ConexionesPage() {
-  const { connections, error } = await fetchInitialConnections();
-  return <ConexionesClient initialConnections={connections} initialError={error} />;
+  const [{ connections, error }, symbols] = await Promise.all([fetchInitialConnections(), fetchSymbols()]);
+  return <ConexionesClient initialConnections={connections} initialError={error} symbols={symbols} />;
 }

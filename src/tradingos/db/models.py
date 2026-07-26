@@ -106,10 +106,16 @@ class SavedStrategy(Base):
     # eso se valida aparte contra los datasets realmente disponibles.
     symbols: Mapped[list[str]] = mapped_column(JSON)
     timeframes: Mapped[list[str]] = mapped_column(JSON)
-    # Texto libre, no un DSL ejecutable: hoy la lógica de entrada/salida vive fija en el
-    # código de la estrategia registrada (Strategy.on_bar), esto es solo documentación.
+    # Texto autogenerado (ver core/conditions.describe_conditions) a partir de
+    # entry_rules/exit_rules — no se tipea a mano, es solo para mostrar en la UI.
     entry_conditions: Mapped[str] = mapped_column(Text, default="")
     exit_conditions: Mapped[str] = mapped_column(Text, default="")
+    # Reglas ejecutables del constructor de condiciones (list[Condition], ver
+    # core/conditions.py). Se mergean en StrategyConfig al correr un backtest — ver
+    # _run_and_persist_backtest en api/routers/strategies.py. Vacío = sin condiciones
+    # (ma_crossover y estrategias viejas no usan estos campos).
+    entry_rules: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    exit_rules: Mapped[list[Any]] = mapped_column(JSON, default=list)
     # StrategyConfig.model_dump() base (SL/TP/trailing/riesgo/indicadores); cada corrida
     # de backtest puede pisar symbol/timeframe pero parte de esta config.
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -138,6 +144,10 @@ class StrategyBacktestRun(Base):
     # se edita después, el historial no debe cambiar retroactivamente.
     config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON)
     initial_equity: Mapped[float] = mapped_column(Float)
+    # Ventana de velas del dataset efectivamente usada; None = todo el histórico
+    # disponible (compatibilidad con corridas de antes de que existiera este filtro).
+    range_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    range_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     num_trades: Mapped[int] = mapped_column(Integer)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON)
     equity_curve: Mapped[list[Any]] = mapped_column(JSON)

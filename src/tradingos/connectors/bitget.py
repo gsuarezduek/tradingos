@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import time
 
 import requests
@@ -87,3 +88,57 @@ def get_spot_balances(api_key: str, api_secret: str, passphrase: str) -> list[di
         if free > 0 or locked > 0:
             balances.append({"asset": b["coin"], "free": free, "locked": locked, "total": free + locked})
     return balances
+
+
+def _signed_post(path: str, api_key: str, api_secret: str, passphrase: str, body_dict: dict) -> dict:
+    timestamp = str(int(time.time() * 1000))
+    body = json.dumps(body_dict, separators=(",", ":"))
+    signature = _sign(timestamp, "POST", path, body, api_secret)
+    headers = {
+        "ACCESS-KEY": api_key,
+        "ACCESS-SIGN": signature,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": passphrase,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(f"{BASE_URL}{path}", headers=headers, data=body, timeout=_TIMEOUT)
+    except requests.RequestException as exc:
+        raise BitgetAPIError(f"no se pudo conectar con Bitget: {exc}") from exc
+
+    try:
+        parsed = response.json()
+    except ValueError:
+        raise BitgetAPIError(response.text) from None
+
+    if parsed.get("code") != "00000":
+        raise BitgetAPIError(parsed.get("msg", "error desconocido de Bitget"))
+
+    return parsed
+
+
+def place_market_order(api_key: str, api_secret: str, passphrase: str, symbol: str, side: str, quantity: float) -> dict:
+    """Envía una orden MARKET spot real. `quantity` es la cantidad del activo base
+    (misma convención que el resto de los conectores) — Bitget es la excepción
+    real: para MARKET BUY, el campo `size` que espera la API es el costo en USDT a
+    gastar, no la cantidad del activo base. Se convierte acá adentro con el precio
+    spot actual (get_spot_usdt_prices, ya usado para el feature de saldos), así
+    esa asimetría no se expone al resto de la app. Para SELL, `size` sí es la
+    cantidad del activo base directamente.
+    """
+    side_lower = side.lower()
+    if side_lower == "buy":
+        prices = get_spot_usdt_prices()
+        asset = symbol[: -len("USDT")] if symbol.endswith("USDT") else symbol
+        price = prices.get(asset)
+        if price is None:
+            raise BitgetAPIError(f"no se encontró precio spot para {asset} contra USDT")
+        size = str(quantity * price)
+    else:
+        size = str(quantity)
+
+    body_dict = {"symbol": symbol, "side": side_lower, "orderType": "market", "force": "gtc", "size": size}
+    body = _signed_post("/api/v2/spot/trade/place-order", api_key, api_secret, passphrase, body_dict)
+    order_id = body.get("data", {}).get("orderId", "")
+    return {"exchange_order_id": str(order_id), "raw": body}
