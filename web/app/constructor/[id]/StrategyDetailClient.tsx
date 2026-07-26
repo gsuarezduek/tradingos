@@ -6,7 +6,7 @@ import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
 import { TopMetricsPanel } from "@/components/TopMetricsPanel";
 import type { LiveBacktestMetrics } from "@/lib/api";
-import type { DatasetOption } from "../ConstructorClient";
+import { conditionLabel, type Condition, type ConditionCategory, type DatasetOption } from "../ConstructorClient";
 
 interface StrategyConfigJSON {
   symbol: string;
@@ -25,8 +25,11 @@ interface BacktestRunSummary {
   timeframe: string;
   dataset: string;
   initial_equity: number;
+  range_start: string | null;
+  range_end: string | null;
   num_trades: number;
   metrics: LiveBacktestMetrics;
+  total_pnl: number;
   created_at: string;
 }
 
@@ -56,6 +59,8 @@ export interface StrategyDetail {
   timeframes: string[];
   entry_conditions: string;
   exit_conditions: string;
+  entry_rules: Condition[];
+  exit_rules: Condition[];
   config: StrategyConfigJSON;
   status: string;
   notes: string;
@@ -88,11 +93,13 @@ export function StrategyDetailClient({
   initialStrategy,
   initialError,
   datasets,
+  conditionCatalog,
 }: {
   strategyId: string;
   initialStrategy: StrategyDetail | null;
   initialError: string | null;
   datasets: DatasetOption[];
+  conditionCatalog: ConditionCategory[];
 }) {
   const [strategy, setStrategy] = useState<StrategyDetail | null>(initialStrategy);
   const [loadError] = useState<string | null>(initialError);
@@ -106,6 +113,9 @@ export function StrategyDetailClient({
   const [runSymbol, setRunSymbol] = useState(initialValidCombos[0]?.symbol ?? "");
   const [runTimeframe, setRunTimeframe] = useState(initialValidCombos[0]?.timeframe ?? "");
   const [runInitialEquity, setRunInitialEquity] = useState(10000);
+  // Vacío = usar todo el histórico disponible del dataset.
+  const [runStartDate, setRunStartDate] = useState("");
+  const [runEndDate, setRunEndDate] = useState("");
   const [runningBacktest, setRunningBacktest] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -162,7 +172,13 @@ export function StrategyDetailClient({
       const response = await fetch(`/api/strategies/${strategy.id}/backtests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: runSymbol, timeframe: runTimeframe, initial_equity: runInitialEquity }),
+        body: JSON.stringify({
+          symbol: runSymbol,
+          timeframe: runTimeframe,
+          initial_equity: runInitialEquity,
+          start_date: runStartDate || null,
+          end_date: runEndDate || null,
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -193,6 +209,7 @@ export function StrategyDetailClient({
   }
 
   const isActive = strategy.status === "active";
+  const selectedDataset = validCombos.find((d) => d.symbol === runSymbol && d.timeframe === runTimeframe) ?? null;
   const trades = selectedRunDetail?.trades ?? [];
   const chartData = (selectedRunDetail?.equity_curve ?? []).slice(-5).map((point) => ({
     label: new Date(point.timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit" }),
@@ -217,9 +234,11 @@ export function StrategyDetailClient({
             <InfoGuide>
               Esta pantalla muestra la estrategia guardada (categoría, mercados, temporalidades, condiciones
               y parámetros técnicos) junto con el historial completo de backtests corridos contra ella.
-              Elegí símbolo/timeframe entre los que declaraste (y para los que hay dataset real) y corré un
-              nuevo backtest cuando quieras: cada corrida queda guardada, no reemplaza a las anteriores.
-              Hacé clic en una fila del historial para ver su curva de equity y sus operaciones.
+              Elegí símbolo/timeframe entre los que declaraste (y para los que hay dataset real), opcionalmente
+              acotá el rango de fechas a probar, y corré un nuevo backtest cuando quieras: cada corrida queda
+              guardada, no reemplaza a las anteriores. Hacé clic en una fila del historial para ver su curva
+              de equity y sus operaciones (con precio de entrada/salida de cada una, para poder auditar que
+              la estrategia esté operando como esperás).
             </InfoGuide>
           </h1>
           <p className="text-xs text-muted">
@@ -254,25 +273,61 @@ export function StrategyDetailClient({
 
       <div className="rounded-3xl bg-panel p-8">
         <h2 className="text-lg font-bold text-ink">Definición de la estrategia</h2>
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <ConfigField label="EMA rápida" value={emaFast != null ? String(emaFast) : "—"} />
-          <ConfigField label="EMA lenta" value={emaSlow != null ? String(emaSlow) : "—"} />
-          <ConfigField label="ATR (períodos)" value={atr != null ? String(atr) : "—"} />
-          <ConfigField label="ATR mínimo" value={pct(atrMinPct)} />
-          <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
-          <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
-          <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
-          <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
-        </div>
+
+        {strategy.strategy_type === "condition_based" ? (
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
+            <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
+            <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
+            <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
+          </div>
+        ) : (
+          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            <ConfigField label="EMA rápida" value={emaFast != null ? String(emaFast) : "—"} />
+            <ConfigField label="EMA lenta" value={emaSlow != null ? String(emaSlow) : "—"} />
+            <ConfigField label="ATR (períodos)" value={atr != null ? String(atr) : "—"} />
+            <ConfigField label="ATR mínimo" value={pct(atrMinPct)} />
+            <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
+            <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
+            <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
+            <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
+          </div>
+        )}
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-xs font-medium text-muted">Condiciones de entrada</span>
-            <p className="mt-1 text-sm text-ink">{strategy.entry_conditions || "—"}</p>
+            {strategy.entry_rules.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-2">
+                {strategy.entry_rules.map((c, i) => (
+                  <span
+                    key={i}
+                    className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
+                  >
+                    {conditionLabel(conditionCatalog, c)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-ink">{strategy.entry_conditions || "—"}</p>
+            )}
           </div>
           <div>
             <span className="text-xs font-medium text-muted">Condiciones de salida</span>
-            <p className="mt-1 text-sm text-ink">{strategy.exit_conditions || "—"}</p>
+            {strategy.exit_rules.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-2">
+                {strategy.exit_rules.map((c, i) => (
+                  <span
+                    key={i}
+                    className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
+                  >
+                    {conditionLabel(conditionCatalog, c)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-sm text-ink">{strategy.exit_conditions || "—"}</p>
+            )}
           </div>
         </div>
 
@@ -324,6 +379,28 @@ export function StrategyDetailClient({
                 className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
               />
             </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Desde</span>
+              <input
+                type="date"
+                value={runStartDate}
+                min={selectedDataset?.start.slice(0, 10)}
+                max={selectedDataset?.end.slice(0, 10)}
+                onChange={(e) => setRunStartDate(e.target.value)}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Hasta</span>
+              <input
+                type="date"
+                value={runEndDate}
+                min={selectedDataset?.start.slice(0, 10)}
+                max={selectedDataset?.end.slice(0, 10)}
+                onChange={(e) => setRunEndDate(e.target.value)}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              />
+            </label>
             <button
               onClick={runNewBacktest}
               disabled={runningBacktest}
@@ -332,6 +409,15 @@ export function StrategyDetailClient({
               {runningBacktest ? "Corriendo…" : "Correr backtest"}
             </button>
           </div>
+        )}
+
+        {validCombos.length > 0 && selectedDataset && (
+          <p className="mt-2 text-xs text-muted">
+            Datos disponibles para {selectedDataset.symbol} · {selectedDataset.timeframe}: desde{" "}
+            {new Date(selectedDataset.start).toLocaleDateString("es-AR")} hasta{" "}
+            {new Date(selectedDataset.end).toLocaleDateString("es-AR")}. Dejá las fechas vacías para usar todo el
+            histórico.
+          </p>
         )}
 
         {runError && (
@@ -358,6 +444,7 @@ export function StrategyDetailClient({
                   <th className="pb-2 pr-4 font-medium">Operaciones</th>
                   <th className="pb-2 pr-4 font-medium">Win rate</th>
                   <th className="pb-2 pr-4 font-medium">Profit factor</th>
+                  <th className="pb-2 pr-4 font-medium">PnL total</th>
                   <th className="pb-2 font-medium" />
                 </tr>
               </thead>
@@ -370,6 +457,10 @@ export function StrategyDetailClient({
                     <td className="py-3 pr-4 text-ink">{run.num_trades}</td>
                     <td className="py-3 pr-4 text-ink">{(run.metrics.win_rate * 100).toLocaleString("es-AR", { maximumFractionDigits: 1 })}%</td>
                     <td className="py-3 pr-4 text-ink">{run.metrics.profit_factor.toLocaleString("es-AR", { maximumFractionDigits: 2 })}</td>
+                    <td className={`py-3 pr-4 font-semibold ${run.total_pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                      {run.total_pnl >= 0 ? "+" : ""}
+                      {run.total_pnl.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
+                    </td>
                     <td className="py-3">
                       <button
                         onClick={() => setSelectedRunId(run.id)}
@@ -393,7 +484,9 @@ export function StrategyDetailClient({
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
                   <th className="pb-2 pr-4 font-medium">Lado</th>
                   <th className="pb-2 pr-4 font-medium">Entrada</th>
+                  <th className="pb-2 pr-4 font-medium">Precio entrada</th>
                   <th className="pb-2 pr-4 font-medium">Salida</th>
+                  <th className="pb-2 pr-4 font-medium">Precio salida</th>
                   <th className="pb-2 font-medium">PnL</th>
                 </tr>
               </thead>
@@ -408,7 +501,13 @@ export function StrategyDetailClient({
                         {new Date(trade.entry_timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit" })}
                       </td>
                       <td className="py-2 pr-4 text-ink">
+                        {trade.entry_price.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-2 pr-4 text-ink">
                         {new Date(trade.exit_timestamp).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit" })}
+                      </td>
+                      <td className="py-2 pr-4 text-ink">
+                        {trade.exit_price.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
                       </td>
                       <td className={`py-2 ${trade.pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
                         {trade.pnl.toLocaleString("es-AR", { maximumFractionDigits: 2 })}

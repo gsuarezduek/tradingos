@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
-import { ConstructorClient, type DatasetOption, type SavedStrategySummary } from "./ConstructorClient";
+import { ConstructorClient, type ConditionCategory, type DatasetOption, type SavedStrategySummary } from "./ConstructorClient";
 
 async function fetchStrategies(): Promise<{ strategies: SavedStrategySummary[]; error: string | null }> {
   const token = await getSessionToken();
@@ -25,21 +25,7 @@ async function fetchStrategies(): Promise<{ strategies: SavedStrategySummary[]; 
   }
 }
 
-// Catálogo de estrategias registradas (ej. "ma_crossover") y datasets realmente
-// disponibles en el servidor; ambos son públicos, sin auth (igual que /backtests/demo).
-async function fetchCatalog(): Promise<string[]> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/strategies/catalog`, {
-      signal: AbortSignal.timeout(10000),
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return [];
-    return await response.json();
-  } catch {
-    return [];
-  }
-}
-
+// Datasets realmente disponibles en el servidor; público, sin auth (igual que /backtests/demo).
 async function fetchDatasets(): Promise<DatasetOption[]> {
   try {
     const response = await fetch(`${API_BASE_URL}/strategies/datasets`, {
@@ -73,20 +59,35 @@ async function fetchSymbols(): Promise<string[]> {
   }
 }
 
+// Catálogo completo del constructor de condiciones (EMA disponible, el resto marcado
+// "Próximamente"). Público, sin auth.
+async function fetchConditionCatalog(): Promise<ConditionCategory[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/strategies/conditions/catalog`, {
+      signal: AbortSignal.timeout(10000),
+      next: { revalidate: 300 },
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function ConstructorPage() {
-  const [{ strategies, error }, catalog, datasets, symbols] = await Promise.all([
+  const [{ strategies, error }, datasets, symbols, conditionCatalog] = await Promise.all([
     fetchStrategies(),
-    fetchCatalog(),
     fetchDatasets(),
     fetchSymbols(),
+    fetchConditionCatalog(),
   ]);
   return (
     <ConstructorClient
       initialStrategies={strategies}
       initialError={error}
-      catalog={catalog}
       datasets={datasets}
       symbols={symbols}
+      conditionCatalog={conditionCatalog}
     />
   );
 }

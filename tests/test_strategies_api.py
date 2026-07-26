@@ -23,8 +23,6 @@ def _create_payload(**overrides) -> dict:
         "category": "swing",
         "symbols": ["BTCUSDT"],
         "timeframes": ["1h"],
-        "entry_conditions": "EMA rápida cruza por encima de la lenta con ATR suficiente",
-        "exit_conditions": "EMA rápida cruza por debajo de la lenta",
         "config": default_config(symbol="BTCUSDT", timeframe="1h").model_dump(),
         "notes": "estrategia de prueba",
         "initial_equity": 10_000.0,
@@ -174,6 +172,73 @@ def test_run_detail_includes_equity_curve_and_trades():
     assert body["trades"][0]["side"] in ("long", "short")
 
 
+def test_run_detail_reports_total_pnl_consistent_with_equity_curve():
+    token = _register_and_get_token("pnl@example.com")
+    created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+    run_id = created.json()["backtest_runs"][0]["id"]
+
+    run_detail = client.get(f"/strategies/{strategy_id}/backtests/{run_id}", headers=_auth_headers(token)).json()
+
+    expected_pnl = run_detail["equity_curve"][-1]["equity"] - run_detail["initial_equity"]
+    assert run_detail["total_pnl"] == expected_pnl
+    assert created.json()["backtest_runs"][0]["total_pnl"] == expected_pnl
+
+
+def test_run_backtest_with_date_range_persists_range_and_narrows_data():
+    token = _register_and_get_token("rango@example.com")
+    created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+
+    response = client.post(
+        f"/strategies/{strategy_id}/backtests",
+        json={
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "initial_equity": 10_000.0,
+            "start_date": "2023-01-01",
+            "end_date": "2023-06-01",
+        },
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["range_start"].startswith("2023-01-01")
+    assert body["range_end"].startswith("2023-06-01")
+    # Medio año de datos produce menos operaciones que el histórico completo (695 en el
+    # fixture de creación, que corre sin rango).
+    assert body["num_trades"] < created.json()["backtest_runs"][0]["num_trades"]
+
+
+def test_run_backtest_rejects_start_after_end():
+    token = _register_and_get_token("rango-invalido@example.com")
+    created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+
+    response = client.post(
+        f"/strategies/{strategy_id}/backtests",
+        json={"symbol": "BTCUSDT", "timeframe": "1h", "start_date": "2023-06-01", "end_date": "2023-01-01"},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 400
+
+
+def test_run_backtest_rejects_range_outside_dataset_coverage():
+    token = _register_and_get_token("rango-fuera@example.com")
+    created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+
+    response = client.post(
+        f"/strategies/{strategy_id}/backtests",
+        json={"symbol": "BTCUSDT", "timeframe": "1h", "start_date": "1990-01-01", "end_date": "1990-06-01"},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 400
+
+
 def test_run_backtest_rejects_symbol_outside_strategy_markets():
     token = _register_and_get_token("fuera@example.com")
     created = client.post("/strategies", json=_create_payload(), headers=_auth_headers(token))
@@ -195,4 +260,78 @@ def test_catalog_and_datasets_are_public():
 
     datasets = client.get("/strategies/datasets")
     assert datasets.status_code == 200
-    assert {"symbol": "BTCUSDT", "timeframe": "1h", "dataset": "BTCUSDT_1h.parquet"} in datasets.json()
+    btc_1h = next(d for d in datasets.json() if d["symbol"] == "BTCUSDT" and d["timeframe"] == "1h")
+    assert btc_1h["dataset"] == "BTCUSDT_1h.parquet"
+    assert btc_1h["start"] < btc_1h["end"]
+
+
+def _condition_based_payload(**overrides) -> dict:
+    payload = {
+        "name": "Estrategia por condiciones",
+        "strategy_type": "condition_based",
+        "category": "swing",
+        "symbols": ["BTCUSDT"],
+        "timeframes": ["1h"],
+        "entry_rules": [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}],
+        "exit_rules": [{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}],
+        "config": {"symbol": "BTCUSDT", "timeframe": "1h", "stop_loss_pct": 0.05, "risk_per_trade": 0.01},
+        "notes": "",
+        "initial_equity": 10_000.0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_conditions_catalog_is_public_and_lists_ema_as_available():
+    response = client.get("/strategies/conditions/catalog")
+    assert response.status_code == 200
+    catalog = {c["category"]: c for c in response.json()}
+    assert catalog["ema"]["available"] is True
+    assert catalog["rsi"]["available"] is False
+    assert any(t["type"] == "cross_above" for t in catalog["ema"]["condition_types"])
+
+
+def test_create_condition_based_strategy_runs_backtest_and_describes_rules():
+    token = _register_and_get_token("condiciones@example.com")
+    response = client.post("/strategies", json=_condition_based_payload(), headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["entry_rules"] == _condition_based_payload()["entry_rules"]
+    assert "EMA12" in body["entry_conditions"] and "EMA26" in body["entry_conditions"]
+    assert "EMA12" in body["exit_conditions"] and "EMA26" in body["exit_conditions"]
+    assert len(body["backtest_runs"]) == 1
+
+
+def test_create_condition_based_strategy_requires_entry_rules():
+    token = _register_and_get_token("sin-condiciones@example.com")
+    response = client.post(
+        "/strategies", json=_condition_based_payload(entry_rules=[]), headers=_auth_headers(token)
+    )
+    assert response.status_code == 422
+
+
+def test_create_condition_based_strategy_rejects_unavailable_category():
+    token = _register_and_get_token("categoria-no-disponible@example.com")
+    payload = _condition_based_payload(
+        entry_rules=[{"category": "rsi", "condition_type": "rsi_above_70", "params": {}}]
+    )
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 400
+    assert "rsi" in response.json()["detail"]
+
+
+def test_update_condition_based_strategy_regenerates_description():
+    token = _register_and_get_token("editar-condiciones@example.com")
+    created = client.post("/strategies", json=_condition_based_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+
+    response = client.patch(
+        f"/strategies/{strategy_id}",
+        json={"entry_rules": [{"category": "ema", "condition_type": "price_above", "params": {"period": 50}}]},
+        headers=_auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["entry_conditions"] == "Precio > EMA50"

@@ -16,10 +16,47 @@ const MAX_SUGGESTIONS = 30;
 // implica que ya exista un dataset real para correr un backtest en esa temporalidad.
 const TIMEFRAME_OPTIONS = ["3m", "5m", "30m", "1h", "4h", "1d", "1w"];
 
+export interface Condition {
+  category: string;
+  condition_type: string;
+  params: Record<string, number>;
+}
+
+export interface ConditionTypeOption {
+  type: string;
+  label: string;
+  params: string[];
+}
+
+export interface ConditionCategory {
+  category: string;
+  label: string;
+  available: boolean;
+  condition_types: ConditionTypeOption[];
+}
+
+const PARAM_LABELS: Record<string, string> = {
+  period: "Período",
+  period_a: "Período rápido",
+  period_b: "Período lento",
+  lookback: "Velas atrás",
+  threshold_pct: "Umbral (%)",
+};
+
+const PARAM_DEFAULTS: Record<string, number> = {
+  period: 20,
+  period_a: 12,
+  period_b: 26,
+  lookback: 5,
+  threshold_pct: 1,
+};
+
 export interface DatasetOption {
   symbol: string;
   timeframe: string;
   dataset: string;
+  start: string;
+  end: string;
 }
 
 export interface BacktestRunSummary {
@@ -28,8 +65,11 @@ export interface BacktestRunSummary {
   timeframe: string;
   dataset: string;
   initial_equity: number;
+  range_start: string | null;
+  range_end: string | null;
   num_trades: number;
   metrics: LiveBacktestMetrics;
+  total_pnl: number;
   created_at: string;
 }
 
@@ -63,13 +103,9 @@ interface FormState {
   category: string;
   symbols: string[];
   timeframes: string[];
-  entryConditions: string;
-  exitConditions: string;
+  entryRules: Condition[];
+  exitRules: Condition[];
   notes: string;
-  emaFastPeriod: number;
-  emaSlowPeriod: number;
-  atrPeriod: number;
-  atrMinValuePct: number;
   stopLossPct: number;
   takeProfitPct: number;
   trailingStopPct: number;
@@ -83,13 +119,9 @@ function defaultsFor(datasets: DatasetOption[]): FormState {
     category: "swing",
     symbols: datasets.length > 0 ? [datasets[0].symbol] : [],
     timeframes: datasets.length > 0 ? [datasets[0].timeframe] : [],
-    entryConditions: "",
-    exitConditions: "",
+    entryRules: [],
+    exitRules: [],
     notes: "",
-    emaFastPeriod: 12,
-    emaSlowPeriod: 26,
-    atrPeriod: 14,
-    atrMinValuePct: 0.1,
     stopLossPct: 2,
     takeProfitPct: 4,
     trailingStopPct: 1.5,
@@ -258,6 +290,174 @@ function MultiSymbolCombobox({
   );
 }
 
+export function conditionLabel(catalog: ConditionCategory[], condition: Condition): string {
+  const conditionType = catalog
+    .find((c) => c.category === condition.category)
+    ?.condition_types.find((t) => t.type === condition.condition_type);
+  const paramsText = Object.entries(condition.params)
+    .map(([key, value]) => `${PARAM_LABELS[key] ?? key}=${value}`)
+    .join(", ");
+  return `${conditionType?.label ?? condition.condition_type}${paramsText ? ` (${paramsText})` : ""}`;
+}
+
+function ConditionBuilder({
+  label,
+  conditions,
+  onChange,
+  catalog,
+  emptyHint,
+}: {
+  label: string;
+  conditions: Condition[];
+  onChange: (conditions: Condition[]) => void;
+  catalog: ConditionCategory[];
+  emptyHint: string;
+}) {
+  const firstAvailable = catalog.find((c) => c.available) ?? catalog[0];
+  const [adding, setAdding] = useState(false);
+  const [category, setCategory] = useState(firstAvailable?.category ?? "");
+  const [conditionType, setConditionType] = useState(firstAvailable?.condition_types[0]?.type ?? "");
+  const [params, setParams] = useState<Record<string, number>>({});
+
+  const selectedCategory = catalog.find((c) => c.category === category);
+  const selectedType = selectedCategory?.condition_types.find((t) => t.type === conditionType);
+
+  function selectConditionType(category: ConditionCategory, type: ConditionTypeOption) {
+    setCategory(category.category);
+    setConditionType(type.type);
+    setParams(Object.fromEntries(type.params.map((p) => [p, PARAM_DEFAULTS[p] ?? 1])));
+  }
+
+  function startAdding() {
+    if (firstAvailable?.condition_types[0]) selectConditionType(firstAvailable, firstAvailable.condition_types[0]);
+    setAdding(true);
+  }
+
+  function confirmAdd() {
+    if (!selectedCategory?.available || !selectedType) return;
+    onChange([...conditions, { category, condition_type: conditionType, params }]);
+    setAdding(false);
+  }
+
+  function remove(index: number) {
+    onChange(conditions.filter((_, i) => i !== index));
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs font-medium text-muted">{label}</span>
+      <div className="flex flex-wrap gap-2">
+        {conditions.map((c, i) => (
+          <button
+            type="button"
+            key={i}
+            onClick={() => remove(i)}
+            className="rounded-lg border border-ink bg-ink px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            {conditionLabel(catalog, c)} ✕
+          </button>
+        ))}
+        {conditions.length === 0 && <span className="text-xs text-muted">{emptyHint}</span>}
+      </div>
+
+      {!adding && (
+        <button
+          type="button"
+          onClick={startAdding}
+          className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-ink"
+        >
+          + Agregar condición
+        </button>
+      )}
+
+      {adding && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap gap-2">
+            {catalog.map((cat) => (
+              <button
+                type="button"
+                key={cat.category}
+                disabled={!cat.available}
+                onClick={() => cat.condition_types[0] && selectConditionType(cat, cat.condition_types[0])}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                  !cat.available
+                    ? "cursor-not-allowed border-border text-muted opacity-60"
+                    : category === cat.category
+                      ? "border-ink bg-ink text-white"
+                      : "border-border bg-surface text-ink"
+                }`}
+              >
+                {cat.label}
+                {!cat.available && (
+                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px]">Próximamente</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {selectedCategory?.available && (
+            <>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted">Tipo de condición</span>
+                <select
+                  value={conditionType}
+                  onChange={(e) => {
+                    const type = selectedCategory.condition_types.find((t) => t.type === e.target.value);
+                    if (type) selectConditionType(selectedCategory, type);
+                  }}
+                  className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                >
+                  {selectedCategory.condition_types.map((t) => (
+                    <option key={t.type} value={t.type}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedType && selectedType.params.length > 0 && (
+                <div className="flex flex-wrap gap-3">
+                  {selectedType.params.map((p) => (
+                    <label key={p} className="flex flex-col gap-1.5">
+                      <span className="text-xs font-medium text-muted">{PARAM_LABELS[p] ?? p}</span>
+                      <input
+                        type="number"
+                        min={p === "threshold_pct" ? "0.1" : "1"}
+                        step={p === "threshold_pct" ? "0.1" : "1"}
+                        value={params[p] ?? ""}
+                        onChange={(e) => setParams((prev) => ({ ...prev, [p]: Number(e.target.value) }))}
+                        className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={confirmAdd}
+                  disabled={!selectedType}
+                  className="w-fit rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  Agregar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdding(false)}
+                  className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function buildConfig(form: FormState, symbol: string, timeframe: string) {
   return {
     symbol,
@@ -267,11 +467,6 @@ function buildConfig(form: FormState, symbol: string, timeframe: string) {
     trailing_stop_pct: form.trailingStopPct / 100,
     risk_per_trade: form.riskPerTrade / 100,
     position_sizing: { method: "risk_fraction" },
-    indicators: {
-      ema_fast: { period: form.emaFastPeriod },
-      ema_slow: { period: form.emaSlowPeriod },
-      atr: { period: form.atrPeriod, min_value_pct: form.atrMinValuePct / 100 },
-    },
   };
 }
 
@@ -291,15 +486,15 @@ function StatusBadge({ status }: { status: string }) {
 export function ConstructorClient({
   initialStrategies,
   initialError,
-  catalog,
   datasets,
   symbols,
+  conditionCatalog,
 }: {
   initialStrategies: SavedStrategySummary[];
   initialError: string | null;
-  catalog: string[];
   datasets: DatasetOption[];
   symbols: string[];
+  conditionCatalog: ConditionCategory[];
 }) {
   const [strategies, setStrategies] = useState<SavedStrategySummary[]>(initialStrategies);
   const [loadError, setLoadError] = useState<string | null>(initialError);
@@ -332,7 +527,7 @@ export function ConstructorClient({
   }
 
   async function createStrategy() {
-    if (!firstValidCombo) return;
+    if (!firstValidCombo || form.entryRules.length === 0) return;
     setCreating(true);
     setCreateError(null);
 
@@ -342,12 +537,12 @@ export function ConstructorClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name,
-          strategy_type: "ma_crossover",
+          strategy_type: "condition_based",
           category: form.category,
           symbols: form.symbols,
           timeframes: form.timeframes,
-          entry_conditions: form.entryConditions,
-          exit_conditions: form.exitConditions,
+          entry_rules: form.entryRules,
+          exit_rules: form.exitRules,
           notes: form.notes,
           config: buildConfig(form, firstValidCombo.symbol, firstValidCombo.timeframe),
           initial_equity: form.initialEquity,
@@ -379,16 +574,18 @@ export function ConstructorClient({
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
             Constructor de Estrategias
             <InfoGuide>
-              Guardá una estrategia con su nombre, categoría, mercados y temporalidades donde aplica, y los
-              parámetros técnicos (EMA, ATR, stop loss, take profit, trailing stop, riesgo por operación).
-              Al guardarla corre un primer backtest real automáticamente. Desde el detalle de cada
-              estrategia podés volver a correr backtests (eligiendo símbolo y timeframe entre los que
-              declaraste) y ver el historial completo de resultados.
+              Guardá una estrategia con su nombre, categoría, mercados y temporalidades donde aplica, y armá
+              sus condiciones de entrada y salida con &quot;+ Agregar condición&quot;: elegí un indicador y un
+              tipo de condición (ej. &quot;EMA20 cruza EMA50 hacia arriba&quot;) y sumá todas las que
+              necesites — entra cuando se cumplen TODAS las de entrada, y sale cuando se cumplen TODAS las de
+              salida (si no agregás ninguna de salida, la posición solo se cierra por Stop Loss/Take
+              Profit/Trailing Stop). Por ahora solo EMA está operativo; el resto de los indicadores aparece
+              marcado &quot;Próximamente&quot;.
               <br />
               <br />
-              &quot;Condiciones de entrada/salida&quot; son texto libre: hoy la lógica de la estrategia
-              (&quot;{catalog[0] ?? "ma_crossover"}&quot;) es fija en el motor, así que estos campos
-              documentan qué hace, no la ejecutan.
+              Al guardar corre un primer backtest real automáticamente. Desde el detalle de cada estrategia
+              podés volver a correr backtests (eligiendo símbolo, timeframe y rango de fechas) y ver el
+              historial completo de resultados.
               <br />
               <br />
               El campo Mercados autocompleta contra la lista real de pares spot de Binance (igual que en
@@ -423,7 +620,7 @@ export function ConstructorClient({
       {showForm && (
         <div className="rounded-3xl bg-panel p-8">
           <h2 className="text-lg font-bold text-ink">Guardar nueva estrategia</h2>
-          <p className="mt-1 text-sm text-muted">Estrategia base: ma_crossover (EMA Crossover)</p>
+          <p className="mt-1 text-sm text-muted">Constructor de condiciones</p>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <label className="flex flex-col gap-1.5">
@@ -472,27 +669,21 @@ export function ConstructorClient({
             </p>
           )}
 
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted">Condiciones de entrada</span>
-              <textarea
-                value={form.entryConditions}
-                onChange={(e) => update("entryConditions", e.target.value)}
-                rows={2}
-                placeholder="Ej: EMA rápida cruza por encima de la lenta con ATR suficiente"
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted">Condiciones de salida</span>
-              <textarea
-                value={form.exitConditions}
-                onChange={(e) => update("exitConditions", e.target.value)}
-                rows={2}
-                placeholder="Ej: EMA rápida cruza por debajo de la lenta"
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-              />
-            </label>
+          <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <ConditionBuilder
+              label="Condiciones de entrada (todas deben cumplirse)"
+              conditions={form.entryRules}
+              onChange={(v) => update("entryRules", v)}
+              catalog={conditionCatalog}
+              emptyHint="Sin condiciones — agregá al menos una para poder guardar"
+            />
+            <ConditionBuilder
+              label="Condiciones de salida (todas deben cumplirse)"
+              conditions={form.exitRules}
+              onChange={(v) => update("exitRules", v)}
+              catalog={conditionCatalog}
+              emptyHint="Sin condiciones — sale solo por Stop Loss/Take Profit/Trailing Stop"
+            />
           </div>
 
           <label className="mt-4 flex flex-col gap-1.5">
@@ -506,10 +697,6 @@ export function ConstructorClient({
           </label>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <Field label="EMA rápida (períodos)" value={form.emaFastPeriod} step="1" min="1" onChange={(v) => update("emaFastPeriod", v)} />
-            <Field label="EMA lenta (períodos)" value={form.emaSlowPeriod} step="1" min="1" onChange={(v) => update("emaSlowPeriod", v)} />
-            <Field label="ATR (períodos)" value={form.atrPeriod} step="1" min="1" onChange={(v) => update("atrPeriod", v)} />
-            <Field label="ATR mínimo (%)" value={form.atrMinValuePct} onChange={(v) => update("atrMinValuePct", v)} />
             <Field label="Stop Loss (%)" value={form.stopLossPct} onChange={(v) => update("stopLossPct", v)} />
             <Field label="Take Profit (%)" value={form.takeProfitPct} onChange={(v) => update("takeProfitPct", v)} />
             <Field label="Trailing Stop (%)" value={form.trailingStopPct} onChange={(v) => update("trailingStopPct", v)} />
@@ -518,7 +705,7 @@ export function ConstructorClient({
 
           <button
             onClick={createStrategy}
-            disabled={creating || !form.name || !firstValidCombo}
+            disabled={creating || !form.name || !firstValidCombo || form.entryRules.length === 0}
             className="mt-6 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {creating ? "Guardando y corriendo backtest…" : "Guardar y correr backtest"}

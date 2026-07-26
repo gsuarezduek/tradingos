@@ -27,6 +27,11 @@ class StrategyConfig(BaseModel):
     risk_per_trade: float = Field(default=0.01, gt=0, le=1, description="Fracción del equity arriesgada por operación")
     position_sizing: PositionSizing = Field(default_factory=PositionSizing)
     indicators: dict[str, dict[str, Any]] = Field(default_factory=dict, description="nombre -> parámetros del indicador")
+    # Reglas del constructor de condiciones (ver core/conditions.py), consumidas por
+    # ConditionBasedStrategy. Quedan como dict crudo (no Condition) para no crear un
+    # import circular core.strategy <-> core.conditions; ma_crossover las ignora.
+    entry_rules: list[dict[str, Any]] = Field(default_factory=list)
+    exit_rules: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("stop_loss_pct", "take_profit_pct", "trailing_stop_pct")
     @classmethod

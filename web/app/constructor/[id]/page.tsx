@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
-import type { DatasetOption } from "../ConstructorClient";
+import type { ConditionCategory, DatasetOption } from "../ConstructorClient";
 import { StrategyDetailClient, type StrategyDetail } from "./StrategyDetailClient";
 
 async function fetchStrategy(id: string): Promise<{ strategy: StrategyDetail | null; error: string | null }> {
@@ -39,8 +39,33 @@ async function fetchDatasets(): Promise<DatasetOption[]> {
   }
 }
 
+async function fetchConditionCatalog(): Promise<ConditionCategory[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/strategies/conditions/catalog`, {
+      signal: AbortSignal.timeout(10000),
+      next: { revalidate: 300 },
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function StrategyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [{ strategy, error }, datasets] = await Promise.all([fetchStrategy(id), fetchDatasets()]);
-  return <StrategyDetailClient strategyId={id} initialStrategy={strategy} initialError={error} datasets={datasets} />;
+  const [{ strategy, error }, datasets, conditionCatalog] = await Promise.all([
+    fetchStrategy(id),
+    fetchDatasets(),
+    fetchConditionCatalog(),
+  ]);
+  return (
+    <StrategyDetailClient
+      strategyId={id}
+      initialStrategy={strategy}
+      initialError={error}
+      datasets={datasets}
+      conditionCatalog={conditionCatalog}
+    />
+  );
 }

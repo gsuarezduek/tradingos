@@ -1,3 +1,3 @@
-from tradingos.strategies import ma_crossover  # noqa: F401  (registra la estrategia al importar el paquete)
+from tradingos.strategies import condition_based, ma_crossover  # noqa: F401  (registra las estrategias al importar el paquete)
 
-__all__ = ["ma_crossover"]
+__all__ = ["condition_based", "ma_crossover"]
