@@ -62,3 +62,15 @@ def test_engine_final_position_is_none_when_flat_at_end(synthetic_ohlcv):
     # reentrada, no debería quedar posición abierta.
     result = _run_backtest(synthetic_ohlcv)
     assert result.final_position is None
+
+
+def test_supported_timeframes_match_binance_downloader_interval_ms():
+    # SUPPORTED_TIMEFRAMES (acá) e INTERVAL_MS (binance_downloader) son dos fuentes de
+    # verdad independientes que deben cubrir exactamente el mismo conjunto de
+    # temporalidades: paper/live trading validan contra la primera pero después fetchean
+    # velas con fetch_klines, que solo entiende la segunda. Ya se desincronizaron una vez
+    # (faltaban 3m/30m/1w en INTERVAL_MS) — este test evita que vuelva a pasar.
+    from tradingos.backtest.engine import SUPPORTED_TIMEFRAMES
+    from tradingos.data.binance_downloader import INTERVAL_MS
+
+    assert set(SUPPORTED_TIMEFRAMES) == set(INTERVAL_MS)
