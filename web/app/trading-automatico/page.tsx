@@ -47,6 +47,28 @@ async function fetchStrategies(token: string): Promise<{ strategies: SavedStrate
   }
 }
 
+// Única fuente de verdad para qué temporalidades se pueden activar acá: la calcula el
+// backend (piso del cron de trading en vivo) en vez de reimplementarla en el cliente.
+async function fetchLimits(token: string): Promise<{ eligibleTimeframes: string[]; error: string | null }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/live-trading/limits`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return {
+        eligibleTimeframes: [],
+        error: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los límites.",
+      };
+    }
+    return { eligibleTimeframes: data.eligible_timeframes, error: null };
+  } catch {
+    return { eligibleTimeframes: [], error: "No se pudo conectar con la API." };
+  }
+}
+
 async function fetchConnections(token: string): Promise<{ connections: Connection[]; error: string | null }> {
   try {
     const responses = await Promise.all(
@@ -85,6 +107,7 @@ export default async function TradingAutomaticoPage() {
         strategiesError="no autenticado"
         connections={[]}
         connectionsError="no autenticado"
+        eligibleTimeframes={[]}
       />
     );
   }
@@ -93,7 +116,8 @@ export default async function TradingAutomaticoPage() {
     { sessions, error: sessionsError },
     { strategies, error: strategiesError },
     { connections, error: connectionsError },
-  ] = await Promise.all([fetchSessions(token), fetchStrategies(token), fetchConnections(token)]);
+    { eligibleTimeframes },
+  ] = await Promise.all([fetchSessions(token), fetchStrategies(token), fetchConnections(token), fetchLimits(token)]);
 
   return (
     <TradingAutomaticoClient
@@ -103,6 +127,7 @@ export default async function TradingAutomaticoPage() {
       strategiesError={strategiesError}
       connections={connections}
       connectionsError={connectionsError}
+      eligibleTimeframes={eligibleTimeframes}
     />
   );
 }

@@ -112,6 +112,17 @@ def test_create_session_supports_timeframes_other_than_1h(monkeypatch):
     assert response.json()["timeframe"] == "4h"
 
 
+def test_limits_reports_eligible_timeframes_matching_the_cron_floor(monkeypatch):
+    token = _register_and_get_token("limits@example.com")
+
+    response = client.get("/live-trading/limits", headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    eligible = response.json()["eligible_timeframes"]
+    assert "5m" not in eligible  # más rápida que el cron
+    assert eligible == ["15m", "30m", "1h", "4h", "1d", "1w"]  # ordenadas de más rápida a más lenta
+
+
 def test_create_session_rejects_unknown_strategy(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token = _register_and_get_token("unknownstrat@example.com")

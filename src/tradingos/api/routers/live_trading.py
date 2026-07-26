@@ -32,6 +32,19 @@ _MIN_LIVE_TRADING_INTERVAL_MS = 15 * 60_000
 # preferencia.
 MAX_ACTIVE_LIVE_TRADING_SESSIONS = 5
 
+# Temporalidades que se pueden activar en Trading Automático, derivadas del piso de
+# arriba — única fuente de verdad para esto. El frontend las consume vía /limits en vez
+# de reimplementar el cálculo (antes tenía su propia tabla de minutos por temporalidad,
+# que se podía desincronizar del piso real del backend).
+ELIGIBLE_LIVE_TRADING_TIMEFRAMES = sorted(
+    (tf for tf in SUPPORTED_TIMEFRAMES if INTERVAL_MS[tf] >= _MIN_LIVE_TRADING_INTERVAL_MS),
+    key=lambda tf: INTERVAL_MS[tf],
+)
+
+
+class LimitsResponse(BaseModel):
+    eligible_timeframes: list[str]
+
 
 class CreateSessionRequest(BaseModel):
     strategy_id: int
@@ -131,6 +144,11 @@ def _get_owned_connection(connection_id: int, user: User, db: Session) -> Broker
     if connection is None:
         raise HTTPException(status_code=404, detail="conexión no encontrada")
     return connection
+
+
+@router.get("/limits", response_model=LimitsResponse)
+def limits(user: User = Depends(get_current_user)) -> LimitsResponse:
+    return LimitsResponse(eligible_timeframes=ELIGIBLE_LIVE_TRADING_TIMEFRAMES)
 
 
 @router.post("/sessions", response_model=SessionResponse)

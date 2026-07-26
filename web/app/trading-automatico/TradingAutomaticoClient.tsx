@@ -8,29 +8,6 @@ import { EXCHANGES } from "@/lib/exchanges";
 import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
 
-// Duración de cada temporalidad en minutos — igual que INTERVAL_MS en
-// data/binance_downloader.py, en minutos en vez de ms.
-const TIMEFRAME_MINUTES: Record<string, number> = {
-  "1m": 1,
-  "3m": 3,
-  "5m": 5,
-  "15m": 15,
-  "30m": 30,
-  "1h": 60,
-  "4h": 240,
-  "1d": 1440,
-  "1w": 10080,
-};
-
-// El cron de trading en vivo corre cada 15 minutos: una temporalidad más rápida que eso
-// se podría perder en silencio entre ticks (ver el InfoGuide más abajo), así que ni
-// siquiera se ofrece como opción acá.
-const MIN_LIVE_TRADING_MINUTES = 15;
-
-function isLiveTradeable(timeframe: string): boolean {
-  return (TIMEFRAME_MINUTES[timeframe] ?? 0) >= MIN_LIVE_TRADING_MINUTES;
-}
-
 interface CurrentPosition {
   side: string;
   entry_price: number;
@@ -92,6 +69,7 @@ export function TradingAutomaticoClient({
   strategiesError,
   connections,
   connectionsError,
+  eligibleTimeframes: allEligibleTimeframes,
 }: {
   initialSessions: LiveSessionSummary[];
   sessionsError: string | null;
@@ -99,11 +77,16 @@ export function TradingAutomaticoClient({
   strategiesError: string | null;
   connections: Connection[];
   connectionsError: string | null;
+  eligibleTimeframes: string[];
 }) {
   const [sessions, setSessions] = useState<LiveSessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(sessionsError);
 
-  const liveTradeable = useMemo(() => strategies.filter((s) => s.timeframes.some(isLiveTradeable)), [strategies]);
+  const isLiveTradeable = (timeframe: string) => allEligibleTimeframes.includes(timeframe);
+  const liveTradeable = useMemo(
+    () => strategies.filter((s) => s.timeframes.some((tf) => allEligibleTimeframes.includes(tf))),
+    [strategies, allEligibleTimeframes],
+  );
   const tradableConnections = useMemo(() => connections.filter((c) => c.trading_enabled), [connections]);
 
   const canCreate = liveTradeable.length > 0 && tradableConnections.length > 0;
