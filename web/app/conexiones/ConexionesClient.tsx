@@ -48,7 +48,9 @@ interface Order {
   exchange: string;
   symbol: string;
   side: string;
-  quantity: number;
+  amount_usdt: number;
+  filled_quantity: number | null;
+  avg_price: number | null;
   status: string;
   exchange_order_id: string | null;
   error_message: string | null;
@@ -239,13 +241,13 @@ function TradingPanel({
 
   const [symbol, setSymbol] = useState(symbolOptions[0]);
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [quantity, setQuantity] = useState("");
+  const [amountUsdt, setAmountUsdt] = useState("");
   const [step, setStep] = useState<"form" | "review">("form");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const quantityNumber = Number(quantity);
-  const canReview = symbol && quantityNumber > 0;
+  const amountUsdtNumber = Number(amountUsdt);
+  const canReview = symbol && amountUsdtNumber > 0;
 
   async function submitOrder() {
     setSubmitting(true);
@@ -254,7 +256,7 @@ function TradingPanel({
       const response = await fetch(`/api/brokers/${connection.exchange}/connections/${connection.id}/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, side, quantity: quantityNumber }),
+        body: JSON.stringify({ symbol, side, amount_usdt: amountUsdtNumber }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -262,7 +264,7 @@ function TradingPanel({
         return;
       }
       setStep("form");
-      setQuantity("");
+      setAmountUsdt("");
       onOrderPlaced();
     } catch {
       setSubmitError("No se pudo conectar con la API. Probá de nuevo.");
@@ -303,11 +305,11 @@ function TradingPanel({
             </select>
           </label>
           <TextField
-            label="Cantidad (activo base)"
-            value={quantity}
-            onChange={setQuantity}
+            label="Monto (USDT)"
+            value={amountUsdt}
+            onChange={setAmountUsdt}
             type="number"
-            placeholder="Ej: 0.001"
+            placeholder="Ej: 10"
           />
         </div>
       )}
@@ -326,9 +328,10 @@ function TradingPanel({
         <div className="mt-4 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-ink">
           <p>
             Vas a <span className="font-semibold">{side === "buy" ? "comprar" : "vender"}</span>{" "}
-            <span className="font-semibold">{quantity}</span> de <span className="font-semibold">{symbol}</span> a
-            precio de mercado en <span className="font-semibold">{exchangeLabel(connection.exchange)}</span>. Esta acción
-            usa dinero real y no se puede deshacer.
+            <span className="font-semibold">{symbol}</span> por{" "}
+            <span className="font-semibold">{amountUsdt} USDT</span> a precio de mercado en{" "}
+            <span className="font-semibold">{exchangeLabel(connection.exchange)}</span>. Esta acción usa dinero real y
+            no se puede deshacer.
           </p>
           <div className="mt-4 flex gap-3">
             <button
@@ -368,7 +371,9 @@ function TradingPanel({
                 <th className="pb-2 pr-4 font-medium">Fecha</th>
                 <th className="pb-2 pr-4 font-medium">Símbolo</th>
                 <th className="pb-2 pr-4 font-medium">Lado</th>
-                <th className="pb-2 pr-4 font-medium">Cantidad</th>
+                <th className="pb-2 pr-4 font-medium">Monto (USDT)</th>
+                <th className="pb-2 pr-4 font-medium">Cantidad ejecutada</th>
+                <th className="pb-2 pr-4 font-medium">Precio</th>
                 <th className="pb-2 pr-4 font-medium">Estado</th>
                 <th className="pb-2 font-medium">Detalle</th>
               </tr>
@@ -379,7 +384,11 @@ function TradingPanel({
                   <td className="py-2 pr-4 text-ink">{new Date(o.created_at).toLocaleString("es-AR")}</td>
                   <td className="py-2 pr-4 font-semibold text-ink">{o.symbol}</td>
                   <td className="py-2 pr-4 text-ink">{o.side === "buy" ? "Compra" : "Venta"}</td>
-                  <td className="py-2 pr-4 text-ink">{o.quantity}</td>
+                  <td className="py-2 pr-4 text-ink">{formatUsdt(o.amount_usdt)}</td>
+                  <td className="py-2 pr-4 text-ink">
+                    {o.filled_quantity != null ? o.filled_quantity.toLocaleString("es-AR", { maximumFractionDigits: 8 }) : "—"}
+                  </td>
+                  <td className="py-2 pr-4 text-ink">{o.avg_price ? formatUsdt(o.avg_price) : "—"}</td>
                   <td className={`py-2 pr-4 ${o.status === "submitted" ? "text-emerald-600" : "text-red-600"}`}>
                     {o.status === "submitted" ? "Enviada" : "Rechazada"}
                   </td>

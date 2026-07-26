@@ -82,16 +82,28 @@ def test_place_market_order_translates_symbol_to_hyphenated_form(monkeypatch):
     def _fake_post(url, headers=None, timeout=None):
         seen["url"] = url
         seen["headers"] = headers
-        return _FakeResponse(200, {"code": 0, "data": {"orderId": 555}})
+        return _FakeResponse(
+            200,
+            {
+                "code": 0,
+                "data": {"orderId": 555, "executedQty": "0.001", "cummulativeQuoteQty": "64.5"},
+            },
+        )
 
     monkeypatch.setattr(requests, "post", _fake_post)
-    result = place_market_order("my-key", "my-secret", "BTCUSDT", "buy", 0.001)
+    result = place_market_order("my-key", "my-secret", "BTCUSDT", "buy", 10)
 
     assert seen["headers"] == {"X-BX-APIKEY": "my-key"}
     assert "symbol=BTC-USDT" in seen["url"]
     assert "side=BUY" in seen["url"]
     assert "type=MARKET" in seen["url"]
-    assert result == {"exchange_order_id": "555", "raw": {"code": 0, "data": {"orderId": 555}}}
+    assert "quoteOrderQty=10" in seen["url"]
+    assert result == {
+        "exchange_order_id": "555",
+        "raw": {"code": 0, "data": {"orderId": 555, "executedQty": "0.001", "cummulativeQuoteQty": "64.5"}},
+        "filled_quantity": 0.001,
+        "avg_price": 64500.0,
+    }
 
 
 def test_place_market_order_raises_on_error(monkeypatch):

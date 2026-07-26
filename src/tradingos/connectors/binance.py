@@ -78,12 +78,31 @@ def get_spot_balances(api_key: str, api_secret: str) -> list[dict]:
     return balances
 
 
-def place_market_order(api_key: str, api_secret: str, symbol: str, side: str, quantity: float) -> dict:
-    """Envía una orden MARKET spot real. `quantity` es la cantidad del activo base
-    (sirve igual para compra y venta, Binance no requiere quoteOrderQty)."""
-    params = {"symbol": symbol, "side": side.upper(), "type": "MARKET", "quantity": str(quantity)}
+def place_market_order(api_key: str, api_secret: str, symbol: str, side: str, amount_usdt: float) -> dict:
+    """Envía una orden MARKET spot real gastando (BUY) o liquidando (SELL)
+    `amount_usdt` dólares del activo cotizado. Binance soporta `quoteOrderQty` para
+    MARKET en ambos lados, así el usuario siempre piensa en USDT sin importar si
+    compra o vende — no hace falta convertir a cantidad del activo base acá.
+    `newOrderRespType=FULL` (default de Binance para MARKET, se fija explícito para
+    no depender de eso) asegura `executedQty`/`cummulativeQuoteQty` en la respuesta,
+    con los que se calcula la cantidad y el precio promedio realmente ejecutados."""
+    params = {
+        "symbol": symbol,
+        "side": side.upper(),
+        "type": "MARKET",
+        "quoteOrderQty": str(amount_usdt),
+        "newOrderRespType": "FULL",
+    }
     data = _signed_request("POST", SPOT_BASE_URL, "/api/v3/order", api_key, api_secret, params)
-    return {"exchange_order_id": str(data.get("orderId", "")), "raw": data}
+    filled_quantity = float(data["executedQty"]) if data.get("executedQty") else None
+    quote_quantity = float(data["cummulativeQuoteQty"]) if data.get("cummulativeQuoteQty") else None
+    avg_price = quote_quantity / filled_quantity if filled_quantity and quote_quantity else None
+    return {
+        "exchange_order_id": str(data.get("orderId", "")),
+        "raw": data,
+        "filled_quantity": filled_quantity,
+        "avg_price": avg_price,
+    }
 
 
 def get_futures_usdm_balances(api_key: str, api_secret: str) -> list[dict]:

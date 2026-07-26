@@ -118,27 +118,55 @@ def _signed_post(path: str, api_key: str, api_secret: str, passphrase: str, body
     return parsed
 
 
-def place_market_order(api_key: str, api_secret: str, passphrase: str, symbol: str, side: str, quantity: float) -> dict:
-    """Envía una orden MARKET spot real. `quantity` es la cantidad del activo base
-    (misma convención que el resto de los conectores) — Bitget es la excepción
-    real: para MARKET BUY, el campo `size` que espera la API es el costo en USDT a
-    gastar, no la cantidad del activo base. Se convierte acá adentro con el precio
-    spot actual (get_spot_usdt_prices, ya usado para el feature de saldos), así
-    esa asimetría no se expone al resto de la app. Para SELL, `size` sí es la
-    cantidad del activo base directamente.
+def place_market_order(
+    api_key: str, api_secret: str, passphrase: str, symbol: str, side: str, amount_usdt: float
+) -> dict:
+    """Envía una orden MARKET spot real gastando (BUY) o liquidando (SELL)
+    `amount_usdt` dólares del activo cotizado (misma convención que el resto de los
+    conectores) — Bitget es la excepción real: para MARKET BUY, el campo `size` que
+    espera la API ya es directamente el costo en USDT, así que `amount_usdt` se
+    manda tal cual. Para SELL, `size` es la cantidad del activo base, así que acá sí
+    hace falta convertir con el precio spot actual (get_spot_usdt_prices, ya usado
+    para el feature de saldos).
+
+    A diferencia de Binance/MEXC/BingX, la respuesta de place-order de Bitget no
+    trae la cantidad ni el precio de ejecución (son campos "0"/vacíos ahí) — se
+    complementa con una consulta a Get Order Info inmediatamente después. Como la
+    orden ya se envió y aceptó, si esa consulta falla no se trata como error: la
+    orden queda igual con cantidad/precio ejecutado en null.
     """
     side_lower = side.lower()
     if side_lower == "buy":
+        size = str(amount_usdt)
+    else:
         prices = get_spot_usdt_prices()
         asset = symbol[: -len("USDT")] if symbol.endswith("USDT") else symbol
         price = prices.get(asset)
         if price is None:
             raise BitgetAPIError(f"no se encontró precio spot para {asset} contra USDT")
-        size = str(quantity * price)
-    else:
-        size = str(quantity)
+        size = str(amount_usdt / price)
 
     body_dict = {"symbol": symbol, "side": side_lower, "orderType": "market", "force": "gtc", "size": size}
     body = _signed_post("/api/v2/spot/trade/place-order", api_key, api_secret, passphrase, body_dict)
-    order_id = body.get("data", {}).get("orderId", "")
-    return {"exchange_order_id": str(order_id), "raw": body}
+    order_id = str(body.get("data", {}).get("orderId", ""))
+
+    filled_quantity = None
+    avg_price = None
+    if order_id:
+        try:
+            info = _signed_get(f"/api/v2/spot/trade/orderInfo?orderId={order_id}", api_key, api_secret, passphrase)
+            rows = info.get("data") or []
+            if rows:
+                filled = float(rows[0].get("baseVolume") or 0)
+                price_avg = float(rows[0].get("priceAvg") or 0)
+                filled_quantity = filled or None
+                avg_price = price_avg or None
+        except BitgetAPIError:
+            pass
+
+    return {
+        "exchange_order_id": order_id,
+        "raw": body,
+        "filled_quantity": filled_quantity,
+        "avg_price": avg_price,
+    }

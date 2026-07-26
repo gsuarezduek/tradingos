@@ -61,20 +61,20 @@ def _bingx_spot(api_key: str, api_secret: str, passphrase: str | None) -> list[d
 OrderFn = Callable[[str, str, "str | None", str, str, float], dict]
 
 
-def _binance_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
-    return binance_place_market_order(api_key, api_secret, symbol, side, quantity)
+def _binance_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, amount_usdt: float) -> dict:
+    return binance_place_market_order(api_key, api_secret, symbol, side, amount_usdt)
 
 
-def _mexc_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
-    return mexc_place_market_order(api_key, api_secret, symbol, side, quantity)
+def _mexc_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, amount_usdt: float) -> dict:
+    return mexc_place_market_order(api_key, api_secret, symbol, side, amount_usdt)
 
 
-def _bitget_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
-    return bitget_place_market_order(api_key, api_secret, passphrase or "", symbol, side, quantity)
+def _bitget_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, amount_usdt: float) -> dict:
+    return bitget_place_market_order(api_key, api_secret, passphrase or "", symbol, side, amount_usdt)
 
 
-def _bingx_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, quantity: float) -> dict:
-    return bingx_place_market_order(api_key, api_secret, symbol, side, quantity)
+def _bingx_order(api_key: str, api_secret: str, passphrase: str | None, symbol: str, side: str, amount_usdt: float) -> dict:
+    return bingx_place_market_order(api_key, api_secret, symbol, side, amount_usdt)
 
 
 # Wrappers indirectos (en vez de pasar las funciones importadas directo a
@@ -328,7 +328,9 @@ def update_connection(
 class CreateOrderRequest(BaseModel):
     symbol: str
     side: str
-    quantity: float
+    # Siempre en USDT, sin importar el lado: para BUY es cuánto gastar, para SELL
+    # cuánto liquidar (en su equivalente en USDT) del activo base.
+    amount_usdt: float
 
 
 class OrderResponse(BaseModel):
@@ -336,7 +338,9 @@ class OrderResponse(BaseModel):
     exchange: str
     symbol: str
     side: str
-    quantity: float
+    amount_usdt: float
+    filled_quantity: float | None
+    avg_price: float | None
     status: str
     exchange_order_id: str | None
     error_message: str | None
@@ -349,7 +353,9 @@ def _to_order_response(order: LiveOrder) -> OrderResponse:
         exchange=order.exchange,
         symbol=order.symbol,
         side=order.side,
-        quantity=order.quantity,
+        amount_usdt=order.amount_usdt,
+        filled_quantity=order.filled_quantity,
+        avg_price=order.avg_price,
         status=order.status,
         exchange_order_id=order.exchange_order_id,
         error_message=order.error_message,
@@ -373,8 +379,8 @@ def create_order(
     side = request.side.lower()
     if side not in ("buy", "sell"):
         raise HTTPException(status_code=400, detail="side debe ser 'buy' o 'sell'")
-    if request.quantity <= 0:
-        raise HTTPException(status_code=400, detail="quantity debe ser mayor a cero")
+    if request.amount_usdt <= 0:
+        raise HTTPException(status_code=400, detail="amount_usdt debe ser mayor a cero")
 
     api_key = crypto.decrypt(connection.api_key_encrypted)
     api_secret = crypto.decrypt(connection.api_secret_encrypted)
@@ -386,10 +392,10 @@ def create_order(
         exchange=exchange,
         symbol=request.symbol,
         side=side,
-        quantity=request.quantity,
+        amount_usdt=request.amount_usdt,
     )
     try:
-        result = spec.order_fn(api_key, api_secret, passphrase, request.symbol, side, request.quantity)
+        result = spec.order_fn(api_key, api_secret, passphrase, request.symbol, side, request.amount_usdt)
     except _APIErrors as exc:
         order.status = "rejected"
         order.error_message = str(exc)
@@ -397,6 +403,8 @@ def create_order(
         order.status = "submitted"
         order.exchange_order_id = result.get("exchange_order_id")
         order.raw_response = result.get("raw")
+        order.filled_quantity = result.get("filled_quantity")
+        order.avg_price = result.get("avg_price")
 
     db.add(order)
     db.commit()

@@ -75,16 +75,28 @@ def get_spot_balances(api_key: str, api_secret: str) -> list[dict]:
     return balances
 
 
-def place_market_order(api_key: str, api_secret: str, symbol: str, side: str, quantity: float) -> dict:
-    """Envía una orden MARKET spot real. `quantity` es la cantidad del activo base
-    (sirve igual para compra y venta). `symbol` viene concatenado (ej. "BTCUSDT",
-    misma convención que el resto de la app) — BingX necesita el guion, se traduce
-    acá adentro (ej. "BTC-USDT"), no se expone hacia afuera."""
+def place_market_order(api_key: str, api_secret: str, symbol: str, side: str, amount_usdt: float) -> dict:
+    """Envía una orden MARKET spot real gastando (BUY) o liquidando (SELL)
+    `amount_usdt` dólares del activo cotizado (BingX soporta `quoteOrderQty` para
+    MARKET en ambos lados, igual que Binance). `symbol` viene concatenado (ej.
+    "BTCUSDT", misma convención que el resto de la app) — BingX necesita el guion,
+    se traduce acá adentro (ej. "BTC-USDT"), no se expone hacia afuera. La respuesta
+    incluye `executedQty`/`cummulativeQuoteQty`, con los que se calcula la cantidad
+    y el precio promedio realmente ejecutados."""
     bingx_symbol = f"{symbol[:-len('USDT')]}-USDT" if symbol.endswith("USDT") else symbol
-    params = {"symbol": bingx_symbol, "side": side.upper(), "type": "MARKET", "quantity": str(quantity)}
+    params = {"symbol": bingx_symbol, "side": side.upper(), "type": "MARKET", "quoteOrderQty": str(amount_usdt)}
     body = _signed_request("POST", "/openApi/spot/v1/trade/order", api_key, api_secret, params)
-    order_id = body.get("data", {}).get("orderId", "")
-    return {"exchange_order_id": str(order_id), "raw": body}
+    data = body.get("data", {})
+    order_id = data.get("orderId", "")
+    filled_quantity = float(data["executedQty"]) if data.get("executedQty") else None
+    quote_quantity = float(data["cummulativeQuoteQty"]) if data.get("cummulativeQuoteQty") else None
+    avg_price = quote_quantity / filled_quantity if filled_quantity and quote_quantity else None
+    return {
+        "exchange_order_id": str(order_id),
+        "raw": body,
+        "filled_quantity": filled_quantity,
+        "avg_price": avg_price,
+    }
 
 
 def get_spot_usdt_prices() -> dict[str, float]:

@@ -73,15 +73,35 @@ def test_place_market_order_sends_expected_params(monkeypatch):
     def _fake_post(url, headers=None, timeout=None):
         seen["url"] = url
         seen["headers"] = headers
-        return _FakeResponse(200, {"symbol": "BTCUSDT", "orderId": 999, "status": "FILLED"})
+        return _FakeResponse(
+            200,
+            {
+                "symbol": "BTCUSDT",
+                "orderId": 999,
+                "status": "FILLED",
+                "executedQty": "0.5",
+                "cummulativeQuoteQty": "32250.0",
+            },
+        )
 
     monkeypatch.setattr(requests, "post", _fake_post)
-    result = place_market_order("my-key", "my-secret", "BTCUSDT", "sell", 0.5)
+    result = place_market_order("my-key", "my-secret", "BTCUSDT", "sell", 32250.0)
 
     assert seen["headers"] == {"X-MEXC-APIKEY": "my-key"}
     assert "side=SELL" in seen["url"]
-    assert "quantity=0.5" in seen["url"]
-    assert result == {"exchange_order_id": "999", "raw": {"symbol": "BTCUSDT", "orderId": 999, "status": "FILLED"}}
+    assert "quoteOrderQty=32250.0" in seen["url"]
+    assert result == {
+        "exchange_order_id": "999",
+        "raw": {
+            "symbol": "BTCUSDT",
+            "orderId": 999,
+            "status": "FILLED",
+            "executedQty": "0.5",
+            "cummulativeQuoteQty": "32250.0",
+        },
+        "filled_quantity": 0.5,
+        "avg_price": 64500.0,
+    }
 
 
 def test_place_market_order_raises_on_error(monkeypatch):

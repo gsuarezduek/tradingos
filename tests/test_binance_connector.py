@@ -88,20 +88,30 @@ def test_place_market_order_sends_expected_params(monkeypatch):
                 "status": "FILLED",
                 "side": "BUY",
                 "executedQty": "0.001",
+                "cummulativeQuoteQty": "64.5",
             },
         )
 
     monkeypatch.setattr(requests, "post", _fake_post)
-    result = place_market_order("my-key", "my-secret", "BTCUSDT", "buy", 0.001)
+    result = place_market_order("my-key", "my-secret", "BTCUSDT", "buy", 10)
 
     assert seen["headers"] == {"X-MBX-APIKEY": "my-key"}
     assert "symbol=BTCUSDT" in seen["url"]
     assert "side=BUY" in seen["url"]
     assert "type=MARKET" in seen["url"]
-    assert "quantity=0.001" in seen["url"]
+    assert "quoteOrderQty=10" in seen["url"]
     assert result == {
         "exchange_order_id": "123456",
-        "raw": {"symbol": "BTCUSDT", "orderId": 123456, "status": "FILLED", "side": "BUY", "executedQty": "0.001"},
+        "raw": {
+            "symbol": "BTCUSDT",
+            "orderId": 123456,
+            "status": "FILLED",
+            "side": "BUY",
+            "executedQty": "0.001",
+            "cummulativeQuoteQty": "64.5",
+        },
+        "filled_quantity": 0.001,
+        "avg_price": 64500.0,
     }
 
 

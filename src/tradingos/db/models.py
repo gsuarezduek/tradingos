@@ -181,7 +181,14 @@ class LiveOrder(Base):
     exchange: Mapped[str] = mapped_column(String(32))
     symbol: Mapped[str] = mapped_column(String(32))
     side: Mapped[str] = mapped_column(String(8))
-    quantity: Mapped[float] = mapped_column(Float)
+    # Monto en USDT que se pidió gastar (BUY) o liquidar (SELL) — la orden siempre
+    # se expresa en USDT, nunca en cantidad del activo base, sin importar el lado.
+    amount_usdt: Mapped[float] = mapped_column(Float)
+    # Cantidad del activo base y precio promedio que el exchange informó como
+    # realmente ejecutados — null si la orden fue rechazada o si el exchange no lo
+    # informó en la respuesta (ver connectors.bitget.place_market_order).
+    filled_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     # "submitted" (el exchange la aceptó) o "rejected" (el exchange la rechazó,
     # ver error_message) — no es un tracker de fills/ciclo de vida completo.
     status: Mapped[str] = mapped_column(String(16))
