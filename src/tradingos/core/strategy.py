@@ -28,10 +28,14 @@ class StrategyConfig(BaseModel):
     position_sizing: PositionSizing = Field(default_factory=PositionSizing)
     indicators: dict[str, dict[str, Any]] = Field(default_factory=dict, description="nombre -> parámetros del indicador")
     # Reglas del constructor de condiciones (ver core/conditions.py), consumidas por
-    # ConditionBasedStrategy. Quedan como dict crudo (no Condition) para no crear un
-    # import circular core.strategy <-> core.conditions; ma_crossover las ignora.
-    entry_rules: list[dict[str, Any]] = Field(default_factory=list)
-    exit_rules: list[dict[str, Any]] = Field(default_factory=list)
+    # ConditionBasedStrategy. Quedan como dict/lista cruda (no Condition) para no crear
+    # un import circular core.strategy <-> core.conditions; ma_crossover las ignora.
+    # Forma: lista de grupos (O entre grupos, Y dentro de cada uno) — o, por
+    # retrocompatibilidad con estrategias guardadas antes de que existieran los grupos,
+    # una lista plana de condiciones (un solo grupo implícito). Ver
+    # core.conditions.normalize_rule_groups, que interpreta ambas formas.
+    entry_rules: list[Any] = Field(default_factory=list)
+    exit_rules: list[Any] = Field(default_factory=list)
 
     @field_validator("stop_loss_pct", "take_profit_pct", "trailing_stop_pct")
     @classmethod

@@ -90,8 +90,10 @@ export interface StrategyDetail {
   timeframes: string[];
   entry_conditions: string;
   exit_conditions: string;
-  entry_rules: Condition[];
-  exit_rules: Condition[];
+  // Siempre en la forma de grupos (O entre grupos, Y dentro de cada uno) — el backend
+  // normaliza acá incluso las estrategias guardadas antes de que existieran los grupos.
+  entry_rules: Condition[][];
+  exit_rules: Condition[][];
   config: StrategyConfigJSON;
   status: string;
   notes: string;
@@ -611,15 +613,15 @@ export function StrategyDetailClient({
 
             <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
               <ConditionBuilder
-                label="Condiciones de entrada (todas deben cumplirse)"
-                conditions={editForm.entryRules}
+                label="Condiciones de entrada (Y dentro de un grupo, O entre grupos)"
+                groups={editForm.entryRules}
                 onChange={(v) => updateEditForm("entryRules", v)}
                 catalog={conditionCatalog}
                 emptyHint="Sin condiciones — agregá al menos una para poder guardar"
               />
               <ConditionBuilder
-                label="Condiciones de salida (todas deben cumplirse)"
-                conditions={editForm.exitRules}
+                label="Condiciones de salida (Y dentro de un grupo, O entre grupos)"
+                groups={editForm.exitRules}
                 onChange={(v) => updateEditForm("exitRules", v)}
                 catalog={conditionCatalog}
                 emptyHint="Sin condiciones — sale solo por Stop Loss/Take Profit/Trailing Stop"
@@ -693,14 +695,19 @@ export function StrategyDetailClient({
               <div>
                 <span className="text-xs font-medium text-muted">Condiciones de entrada</span>
                 {strategy.entry_rules.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {strategy.entry_rules.map((c, i) => (
-                      <span
-                        key={i}
-                        className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
-                      >
-                        {conditionLabel(conditionCatalog, c)}
-                      </span>
+                  <div className="mt-1 flex flex-col gap-1.5">
+                    {strategy.entry_rules.map((group, gi) => (
+                      <div key={gi} className="flex flex-wrap items-center gap-2">
+                        {gi > 0 && <span className="text-[10px] font-bold uppercase text-muted">O</span>}
+                        {group.map((c, ci) => (
+                          <span key={ci} className="flex items-center gap-2">
+                            {ci > 0 && <span className="text-[10px] font-bold uppercase text-muted">Y</span>}
+                            <span className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink">
+                              {conditionLabel(conditionCatalog, c)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 ) : (
@@ -710,14 +717,19 @@ export function StrategyDetailClient({
               <div>
                 <span className="text-xs font-medium text-muted">Condiciones de salida</span>
                 {strategy.exit_rules.length > 0 ? (
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {strategy.exit_rules.map((c, i) => (
-                      <span
-                        key={i}
-                        className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
-                      >
-                        {conditionLabel(conditionCatalog, c)}
-                      </span>
+                  <div className="mt-1 flex flex-col gap-1.5">
+                    {strategy.exit_rules.map((group, gi) => (
+                      <div key={gi} className="flex flex-wrap items-center gap-2">
+                        {gi > 0 && <span className="text-[10px] font-bold uppercase text-muted">O</span>}
+                        {group.map((c, ci) => (
+                          <span key={ci} className="flex items-center gap-2">
+                            {ci > 0 && <span className="text-[10px] font-bold uppercase text-muted">Y</span>}
+                            <span className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink">
+                              {conditionLabel(conditionCatalog, c)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 ) : (

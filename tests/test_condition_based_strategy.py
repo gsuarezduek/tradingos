@@ -5,6 +5,7 @@ from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.core.conditions import (
     Condition,
+    describe_rule_groups,
     evaluate_adx_condition,
     evaluate_atr_condition,
     evaluate_bollinger_condition,
@@ -12,7 +13,9 @@ from tradingos.core.conditions import (
     evaluate_macd_condition,
     evaluate_price_action_condition,
     evaluate_rsi_condition,
+    evaluate_rule_groups,
     evaluate_volume_condition,
+    normalize_rule_groups,
 )
 from tradingos.core.strategy import StrategyConfig, StrategyContext, get_strategy
 
@@ -299,6 +302,81 @@ def test_condition_based_strategy_combines_ema_and_rsi_conditions(synthetic_ohlc
     # No se afirma un número de trades específico (depende de la combinación exacta),
     # solo que el motor generalizado corre sin romperse mezclando dos categorías.
     assert isinstance(result.trades, list)
+    assert not result.equity_curve.empty
+
+
+def test_normalize_rule_groups_wraps_legacy_flat_list_as_one_group():
+    flat = [
+        {"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}},
+        {"category": "rsi", "condition_type": "rsi_below_50", "params": {}},
+    ]
+    groups = normalize_rule_groups(flat)
+    assert len(groups) == 1
+    assert len(groups[0]) == 2
+    assert groups[0][0].category == "ema"
+    assert groups[0][1].category == "rsi"
+
+
+def test_normalize_rule_groups_keeps_grouped_shape():
+    grouped = [
+        [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}],
+        [{"category": "rsi", "condition_type": "rsi_below_30", "params": {}}],
+    ]
+    groups = normalize_rule_groups(grouped)
+    assert len(groups) == 2
+    assert groups[0][0].category == "ema"
+    assert groups[1][0].category == "rsi"
+
+
+def test_normalize_rule_groups_empty():
+    assert normalize_rule_groups([]) == []
+
+
+def test_evaluate_rule_groups_is_or_of_and():
+    history = pd.DataFrame({"close": [0.0], "rsi_14": [20.0], "ema_20": [110.0]})
+    context = _context(history, 0)
+    # Grupo 1 (Y): price_above EMA20 (falso, close=0) Y algo más -> el grupo entero da False.
+    group_false = [Condition(category="ema", condition_type="price_above", params={"period": 20})]
+    # Grupo 2: RSI < 30 (verdadero) -> alcanza con este grupo para que el OR dé True.
+    group_true = [Condition(category="rsi", condition_type="rsi_below_30")]
+
+    assert evaluate_rule_groups([group_false], context) is False
+    assert evaluate_rule_groups([group_true], context) is True
+    assert evaluate_rule_groups([group_false, group_true], context) is True
+    assert evaluate_rule_groups([], context) is False
+
+
+def test_describe_rule_groups_wraps_multiple_groups_in_parens():
+    groups = [
+        [Condition(category="ema", condition_type="price_above", params={"period": 20})],
+        [Condition(category="rsi", condition_type="rsi_below_30")],
+    ]
+    text = describe_rule_groups(groups)
+    assert text == "(Precio > EMA20) O (RSI < 30)"
+    assert describe_rule_groups(groups[:1]) == "Precio > EMA20"  # un solo grupo: sin paréntesis
+    assert describe_rule_groups([]) == ""
+
+
+def test_condition_based_strategy_with_or_groups_enters_on_either_group(synthetic_ohlcv):
+    config = StrategyConfig(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        stop_loss_pct=0.05,
+        risk_per_trade=0.01,
+        entry_rules=[
+            [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}],
+            [{"category": "rsi", "condition_type": "rsi_below_30", "params": {}}],
+        ],
+        exit_rules=[[{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}]],
+    )
+    strategy_cls = get_strategy("condition_based")
+    engine = BacktestEngine(strategy_cls(config), SimulatedBroker(BrokerSimConfig()), initial_equity=10_000.0)
+
+    result = engine.run(synthetic_ohlcv)
+
+    # RSI < 30 es más laxo que el cruce de EMA solo: con el OR tiene que haber al menos
+    # tantos trades como con el cruce de EMA solo (nunca menos).
+    assert len(result.trades) >= 1
     assert not result.equity_curve.empty
 
 

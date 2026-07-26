@@ -108,8 +108,11 @@ export interface FormState {
   category: string;
   symbols: string[];
   timeframes: string[];
-  entryRules: Condition[];
-  exitRules: Condition[];
+  // Lista de grupos: O entre grupos, Y dentro de cada uno. Un solo grupo con varias
+  // condiciones es el caso de siempre ("todas deben cumplirse"); agregar un segundo
+  // grupo es lo que habilita "esto O aquello".
+  entryRules: Condition[][];
+  exitRules: Condition[][];
   notes: string;
   stopLossPct: number;
   takeProfitPct: number;
@@ -303,21 +306,25 @@ export function conditionLabel(catalog: ConditionCategory[], condition: Conditio
   return `${conditionType?.label ?? condition.condition_type}${paramsText ? ` (${paramsText})` : ""}`;
 }
 
+// null = ningún panel abierto; "new" = agregando un grupo nuevo (O); number = agregando
+// una condición (Y) al grupo en ese índice.
+type AddTarget = number | "new" | null;
+
 export function ConditionBuilder({
   label,
-  conditions,
+  groups,
   onChange,
   catalog,
   emptyHint,
 }: {
   label: string;
-  conditions: Condition[];
-  onChange: (conditions: Condition[]) => void;
+  groups: Condition[][];
+  onChange: (groups: Condition[][]) => void;
   catalog: ConditionCategory[];
   emptyHint: string;
 }) {
   const firstAvailable = catalog.find((c) => c.available) ?? catalog[0];
-  const [adding, setAdding] = useState(false);
+  const [target, setTarget] = useState<AddTarget>(null);
   const [category, setCategory] = useState(firstAvailable?.category ?? "");
   const [conditionType, setConditionType] = useState(firstAvailable?.condition_types[0]?.type ?? "");
   const [params, setParams] = useState<Record<string, number>>({});
@@ -331,132 +338,166 @@ export function ConditionBuilder({
     setParams(Object.fromEntries(type.params.map((p) => [p, PARAM_DEFAULTS[p] ?? 1])));
   }
 
-  function startAdding() {
+  function startAdding(nextTarget: AddTarget) {
     if (firstAvailable?.condition_types[0]) selectConditionType(firstAvailable, firstAvailable.condition_types[0]);
-    setAdding(true);
+    setTarget(nextTarget);
   }
 
   function confirmAdd() {
-    if (!selectedCategory?.available || !selectedType) return;
-    onChange([...conditions, { category, condition_type: conditionType, params }]);
-    setAdding(false);
+    if (!selectedCategory?.available || !selectedType || target === null) return;
+    const condition: Condition = { category, condition_type: conditionType, params };
+    if (target === "new") {
+      onChange([...groups, [condition]]);
+    } else {
+      onChange(groups.map((group, i) => (i === target ? [...group, condition] : group)));
+    }
+    setTarget(null);
   }
 
-  function remove(index: number) {
-    onChange(conditions.filter((_, i) => i !== index));
+  function removeCondition(groupIndex: number, conditionIndex: number) {
+    const nextGroup = groups[groupIndex].filter((_, i) => i !== conditionIndex);
+    // Un grupo sin condiciones no significa nada — desaparece con su última condición.
+    onChange(nextGroup.length === 0 ? groups.filter((_, i) => i !== groupIndex) : groups.map((g, i) => (i === groupIndex ? nextGroup : g)));
   }
+
+  function removeGroup(groupIndex: number) {
+    onChange(groups.filter((_, i) => i !== groupIndex));
+  }
+
+  const addPanel = (
+    <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+      <div className="flex flex-wrap gap-2">
+        {catalog.map((cat) => (
+          <button
+            type="button"
+            key={cat.category}
+            disabled={!cat.available}
+            onClick={() => cat.condition_types[0] && selectConditionType(cat, cat.condition_types[0])}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+              !cat.available
+                ? "cursor-not-allowed border-border text-muted opacity-60"
+                : category === cat.category
+                  ? "border-ink bg-ink text-white"
+                  : "border-border bg-surface text-ink"
+            }`}
+          >
+            {cat.label}
+            {!cat.available && (
+              <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px]">Próximamente</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {selectedCategory?.available && (
+        <>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Tipo de condición</span>
+            <select
+              value={conditionType}
+              onChange={(e) => {
+                const type = selectedCategory.condition_types.find((t) => t.type === e.target.value);
+                if (type) selectConditionType(selectedCategory, type);
+              }}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            >
+              {selectedCategory.condition_types.map((t) => (
+                <option key={t.type} value={t.type}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {selectedType && selectedType.params.length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {selectedType.params.map((p) => (
+                <label key={p} className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted">{PARAM_LABELS[p] ?? p}</span>
+                  <input
+                    type="number"
+                    min={p === "threshold_pct" ? "0.1" : "1"}
+                    step={p === "threshold_pct" ? "0.1" : "1"}
+                    value={params[p] ?? ""}
+                    onChange={(e) => setParams((prev) => ({ ...prev, [p]: Number(e.target.value) }))}
+                    className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={confirmAdd}
+              disabled={!selectedType}
+              className="w-fit rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              Agregar
+            </button>
+            <button
+              type="button"
+              onClick={() => setTarget(null)}
+              className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted"
+            >
+              Cancelar
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-2">
       <span className="text-xs font-medium text-muted">{label}</span>
-      <div className="flex flex-wrap gap-2">
-        {conditions.map((c, i) => (
-          <button
-            type="button"
-            key={i}
-            onClick={() => remove(i)}
-            className="rounded-lg border border-ink bg-ink px-3 py-1.5 text-xs font-semibold text-white"
-          >
-            {conditionLabel(catalog, c)} ✕
-          </button>
+      {groups.length === 0 && <span className="text-xs text-muted">{emptyHint}</span>}
+
+      <div className="flex flex-col gap-2">
+        {groups.map((group, gi) => (
+          <div key={gi} className="flex flex-col gap-2">
+            {gi > 0 && <div className="text-center text-[10px] font-bold uppercase tracking-wide text-muted">O</div>}
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border p-3">
+              {group.map((c, ci) => (
+                <div key={ci} className="flex items-center gap-2">
+                  {ci > 0 && <span className="text-[10px] font-bold uppercase text-muted">Y</span>}
+                  <button
+                    type="button"
+                    onClick={() => removeCondition(gi, ci)}
+                    className="rounded-lg border border-ink bg-ink px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    {conditionLabel(catalog, c)} ✕
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => startAdding(gi)}
+                className="rounded-lg border border-dashed border-border px-2 py-1.5 text-xs font-semibold text-muted"
+              >
+                + Y
+              </button>
+              <button type="button" onClick={() => removeGroup(gi)} className="ml-1 text-xs font-semibold text-red-600 underline">
+                Eliminar grupo
+              </button>
+            </div>
+            {target === gi && addPanel}
+          </div>
         ))}
-        {conditions.length === 0 && <span className="text-xs text-muted">{emptyHint}</span>}
       </div>
 
-      {!adding && (
+      {target !== "new" && (
         <button
           type="button"
-          onClick={startAdding}
+          onClick={() => startAdding("new")}
           className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-ink"
         >
-          + Agregar condición
+          {groups.length === 0 ? "+ Agregar condición" : "+ Agregar grupo (O)"}
         </button>
       )}
 
-      {adding && (
-        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
-          <div className="flex flex-wrap gap-2">
-            {catalog.map((cat) => (
-              <button
-                type="button"
-                key={cat.category}
-                disabled={!cat.available}
-                onClick={() => cat.condition_types[0] && selectConditionType(cat, cat.condition_types[0])}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
-                  !cat.available
-                    ? "cursor-not-allowed border-border text-muted opacity-60"
-                    : category === cat.category
-                      ? "border-ink bg-ink text-white"
-                      : "border-border bg-surface text-ink"
-                }`}
-              >
-                {cat.label}
-                {!cat.available && (
-                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px]">Próximamente</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {selectedCategory?.available && (
-            <>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-muted">Tipo de condición</span>
-                <select
-                  value={conditionType}
-                  onChange={(e) => {
-                    const type = selectedCategory.condition_types.find((t) => t.type === e.target.value);
-                    if (type) selectConditionType(selectedCategory, type);
-                  }}
-                  className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-                >
-                  {selectedCategory.condition_types.map((t) => (
-                    <option key={t.type} value={t.type}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {selectedType && selectedType.params.length > 0 && (
-                <div className="flex flex-wrap gap-3">
-                  {selectedType.params.map((p) => (
-                    <label key={p} className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium text-muted">{PARAM_LABELS[p] ?? p}</span>
-                      <input
-                        type="number"
-                        min={p === "threshold_pct" ? "0.1" : "1"}
-                        step={p === "threshold_pct" ? "0.1" : "1"}
-                        value={params[p] ?? ""}
-                        onChange={(e) => setParams((prev) => ({ ...prev, [p]: Number(e.target.value) }))}
-                        className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={confirmAdd}
-                  disabled={!selectedType}
-                  className="w-fit rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  Agregar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAdding(false)}
-                  className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      {target === "new" && addPanel}
     </div>
   );
 }
@@ -580,10 +621,11 @@ export function EstrategiasClient({
               Guardá una estrategia con su nombre, categoría, mercados y temporalidades donde aplica, y armá
               sus condiciones de entrada y salida con &quot;+ Agregar condición&quot;: elegí un indicador y un
               tipo de condición (ej. &quot;EMA20 cruza EMA50 hacia arriba&quot;) y sumá todas las que
-              necesites — entra cuando se cumplen TODAS las de entrada, y sale cuando se cumplen TODAS las de
-              salida (si no agregás ninguna de salida, la posición solo se cierra por Stop Loss/Take
-              Profit/Trailing Stop). Por ahora solo EMA está operativo; el resto de los indicadores aparece
-              marcado &quot;Próximamente&quot;.
+              necesites dentro de un mismo grupo — ahí todas deben cumplirse (Y). Con &quot;+ Agregar grupo
+              (O)&quot; sumás una alternativa: entra (o sale) si CUALQUIER grupo se cumple entero, no hace
+              falta que se cumplan todos — por ejemplo &quot;(EMA20 cruza EMA50 hacia arriba Y RSI &lt; 50) O
+              (ADX &gt; 25 Y DI+ &gt; DI-)&quot;. Si no agregás ninguna condición de salida, la posición solo se
+              cierra por Stop Loss/Take Profit/Trailing Stop.
               <br />
               <br />
               Al guardar corre un primer backtest real automáticamente. Desde el detalle de cada estrategia
@@ -672,15 +714,15 @@ export function EstrategiasClient({
 
           <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
             <ConditionBuilder
-              label="Condiciones de entrada (todas deben cumplirse)"
-              conditions={form.entryRules}
+              label="Condiciones de entrada (Y dentro de un grupo, O entre grupos)"
+              groups={form.entryRules}
               onChange={(v) => update("entryRules", v)}
               catalog={conditionCatalog}
               emptyHint="Sin condiciones — agregá al menos una para poder guardar"
             />
             <ConditionBuilder
-              label="Condiciones de salida (todas deben cumplirse)"
-              conditions={form.exitRules}
+              label="Condiciones de salida (Y dentro de un grupo, O entre grupos)"
+              groups={form.exitRules}
               onChange={(v) => update("exitRules", v)}
               catalog={conditionCatalog}
               emptyHint="Sin condiciones — sale solo por Stop Loss/Take Profit/Trailing Stop"

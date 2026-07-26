@@ -120,14 +120,17 @@ class SavedStrategy(Base):
     # eso se valida aparte contra los datasets realmente disponibles.
     symbols: Mapped[list[str]] = mapped_column(JSON)
     timeframes: Mapped[list[str]] = mapped_column(JSON)
-    # Texto autogenerado (ver core/conditions.describe_conditions) a partir de
+    # Texto autogenerado (ver core/conditions.describe_rule_groups) a partir de
     # entry_rules/exit_rules — no se tipea a mano, es solo para mostrar en la UI.
     entry_conditions: Mapped[str] = mapped_column(Text, default="")
     exit_conditions: Mapped[str] = mapped_column(Text, default="")
-    # Reglas ejecutables del constructor de condiciones (list[Condition], ver
-    # core/conditions.py). Se mergean en StrategyConfig al correr un backtest — ver
-    # _run_and_persist_backtest en api/routers/strategies.py. Vacío = sin condiciones
-    # (ma_crossover y estrategias viejas no usan estos campos).
+    # Reglas ejecutables del constructor de condiciones: una lista de grupos (O entre
+    # grupos, Y dentro de cada uno — ver core/conditions.py), o por retrocompatibilidad
+    # una lista plana de Condition (estrategias guardadas antes de que existieran los
+    # grupos; se interpreta como un único grupo, ver normalize_rule_groups). Se mergean
+    # en StrategyConfig al correr un backtest — ver _run_and_persist_backtest en
+    # api/routers/strategies.py. Vacío = sin condiciones (ma_crossover y estrategias
+    # viejas no usan estos campos).
     entry_rules: Mapped[list[Any]] = mapped_column(JSON, default=list)
     exit_rules: Mapped[list[Any]] = mapped_column(JSON, default=list)
     # StrategyConfig.model_dump() base (SL/TP/trailing/riesgo/indicadores); cada corrida

@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 from tradingos.auth.dependencies import get_current_user
 from tradingos.backtest.engine import SUPPORTED_TIMEFRAMES
 from tradingos.backtest.service import DATA_DIR, list_available_datasets, resolve_dataset, resolve_strategy, run_backtest_result
-from tradingos.core.conditions import CONDITION_CATALOG, Condition, describe_conditions, validate_condition
+from tradingos.core.conditions import (
+    CONDITION_CATALOG,
+    Condition,
+    describe_rule_groups,
+    normalize_rule_groups,
+    validate_rule_groups,
+)
 from tradingos.core.strategy import StrategyConfig, get_strategy, list_strategies
 from tradingos.db.models import LiveTradingSession, PaperTradingSession, SavedStrategy, StrategyBacktestRun, User
 from tradingos.db.session import get_db
@@ -21,12 +27,11 @@ Category = Literal["scalping", "day_trading", "swing"]
 Status = Literal["active", "paused"]
 
 
-def _validate_rules(conditions: list[Condition]) -> None:
-    for condition in conditions:
-        try:
-            validate_condition(condition)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+def _validate_rule_groups(groups: list[list[Condition]]) -> None:
+    try:
+        validate_rule_groups(groups)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class CreateStrategyRequest(BaseModel):
@@ -36,18 +41,20 @@ class CreateStrategyRequest(BaseModel):
     symbols: list[str] = Field(min_length=1)
     timeframes: list[str] = Field(min_length=1)
     # entry_conditions/exit_conditions ya no los manda el cliente: se autogeneran (ver
-    # describe_conditions) a partir de entry_rules/exit_rules, el constructor de
-    # condiciones. entry_rules es obligatorio (>=1) para strategy_type="condition_based";
-    # ma_crossover no los usa (los ignora StrategyConfig).
-    entry_rules: list[Condition] = Field(default_factory=list)
-    exit_rules: list[Condition] = Field(default_factory=list)
+    # describe_rule_groups) a partir de entry_rules/exit_rules, el constructor de
+    # condiciones. Cada uno es una lista de grupos (O entre grupos, Y dentro de cada
+    # uno) — ver core/conditions.py. entry_rules es obligatorio (>=1 condición en algún
+    # grupo) para strategy_type="condition_based"; ma_crossover no los usa (los ignora
+    # StrategyConfig).
+    entry_rules: list[list[Condition]] = Field(default_factory=list)
+    exit_rules: list[list[Condition]] = Field(default_factory=list)
     config: StrategyConfig
     notes: str = ""
     initial_equity: float = 10_000.0
 
     @model_validator(mode="after")
     def _condition_based_needs_entry_rules(self) -> "CreateStrategyRequest":
-        if self.strategy_type == "condition_based" and not self.entry_rules:
+        if self.strategy_type == "condition_based" and not any(self.entry_rules):
             raise ValueError("una estrategia por condiciones necesita al menos una condición de entrada")
         return self
 
@@ -57,8 +64,8 @@ class UpdateStrategyRequest(BaseModel):
     category: Category | None = None
     symbols: list[str] | None = Field(default=None, min_length=1)
     timeframes: list[str] | None = Field(default=None, min_length=1)
-    entry_rules: list[Condition] | None = None
-    exit_rules: list[Condition] | None = None
+    entry_rules: list[list[Condition]] | None = None
+    exit_rules: list[list[Condition]] | None = None
     config: StrategyConfig | None = None
     status: Status | None = None
     notes: str | None = None
@@ -100,11 +107,13 @@ class StrategyResponse(BaseModel):
     category: str
     symbols: list[str]
     timeframes: list[str]
-    # Texto autogenerado (ver describe_conditions) a partir de entry_rules/exit_rules.
+    # Texto autogenerado (ver describe_rule_groups) a partir de entry_rules/exit_rules.
     entry_conditions: str
     exit_conditions: str
-    entry_rules: list[dict[str, Any]]
-    exit_rules: list[dict[str, Any]]
+    # Siempre en la forma nueva (lista de grupos), normalizada acá aunque la estrategia
+    # se haya guardado antes de que existieran los grupos — ver normalize_rule_groups.
+    entry_rules: list[list[dict[str, Any]]]
+    exit_rules: list[list[dict[str, Any]]]
     config: dict[str, Any]
     status: str
     notes: str
@@ -130,8 +139,8 @@ def _to_strategy_response(strategy: SavedStrategy) -> StrategyResponse:
         timeframes=strategy.timeframes,
         entry_conditions=strategy.entry_conditions,
         exit_conditions=strategy.exit_conditions,
-        entry_rules=strategy.entry_rules,
-        exit_rules=strategy.exit_rules,
+        entry_rules=[[c.model_dump() for c in group] for group in normalize_rule_groups(strategy.entry_rules)],
+        exit_rules=[[c.model_dump() for c in group] for group in normalize_rule_groups(strategy.exit_rules)],
         config=strategy.config,
         status=strategy.status,
         notes=strategy.notes,
@@ -293,8 +302,8 @@ def create_strategy(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     _validate_timeframes(request.timeframes)
-    _validate_rules(request.entry_rules)
-    _validate_rules(request.exit_rules)
+    _validate_rule_groups(request.entry_rules)
+    _validate_rule_groups(request.exit_rules)
 
     if request.config.symbol not in request.symbols:
         raise HTTPException(status_code=400, detail="config.symbol debe estar entre los mercados declarados")
@@ -308,10 +317,10 @@ def create_strategy(
         category=request.category,
         symbols=request.symbols,
         timeframes=request.timeframes,
-        entry_conditions=describe_conditions(request.entry_rules),
-        exit_conditions=describe_conditions(request.exit_rules),
-        entry_rules=[c.model_dump() for c in request.entry_rules],
-        exit_rules=[c.model_dump() for c in request.exit_rules],
+        entry_conditions=describe_rule_groups(request.entry_rules),
+        exit_conditions=describe_rule_groups(request.exit_rules),
+        entry_rules=[[c.model_dump() for c in group] for group in request.entry_rules],
+        exit_rules=[[c.model_dump() for c in group] for group in request.exit_rules],
         config=request.config.model_dump(),
         status="active",
         notes=request.notes,
@@ -388,18 +397,18 @@ def update_strategy(
         _validate_timeframes(updates["timeframes"])
     if "entry_rules" in updates:
         assert request.entry_rules is not None
-        _validate_rules(request.entry_rules)
-        if strategy.strategy_type == "condition_based" and not request.entry_rules:
+        _validate_rule_groups(request.entry_rules)
+        if strategy.strategy_type == "condition_based" and not any(request.entry_rules):
             raise HTTPException(
                 status_code=400, detail="una estrategia por condiciones necesita al menos una condición de entrada"
             )
-        updates["entry_rules"] = [c.model_dump() for c in request.entry_rules]
-        updates["entry_conditions"] = describe_conditions(request.entry_rules)
+        updates["entry_rules"] = [[c.model_dump() for c in group] for group in request.entry_rules]
+        updates["entry_conditions"] = describe_rule_groups(request.entry_rules)
     if "exit_rules" in updates:
         assert request.exit_rules is not None
-        _validate_rules(request.exit_rules)
-        updates["exit_rules"] = [c.model_dump() for c in request.exit_rules]
-        updates["exit_conditions"] = describe_conditions(request.exit_rules)
+        _validate_rule_groups(request.exit_rules)
+        updates["exit_rules"] = [[c.model_dump() for c in group] for group in request.exit_rules]
+        updates["exit_conditions"] = describe_rule_groups(request.exit_rules)
     if "config" in updates:
         # Dump completo (no exclude_unset): config es un reemplazo entero del bloque
         # técnico, no un merge parcial — si se omitiera exclude_unset acá también, los

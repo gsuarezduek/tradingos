@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from tradingos.api.main import app
 from tradingos.db.models import SavedStrategy
+from tradingos.db.session import SessionLocal
 from tradingos.strategies.ma_crossover import default_config
 
 client = TestClient(app)
@@ -335,8 +336,9 @@ def _condition_based_payload(**overrides) -> dict:
         "category": "swing",
         "symbols": ["BTCUSDT"],
         "timeframes": ["1h"],
-        "entry_rules": [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}],
-        "exit_rules": [{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}],
+        # Un solo grupo (Y de las dos): forma nueva, lista de grupos.
+        "entry_rules": [[{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}]],
+        "exit_rules": [[{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}]],
         "config": {"symbol": "BTCUSDT", "timeframe": "1h", "stop_loss_pct": 0.05, "risk_per_trade": 0.01},
         "notes": "",
         "initial_equity": 10_000.0,
@@ -385,7 +387,7 @@ def test_create_condition_based_strategy_rejects_unavailable_category():
     # validación sigue rechazando una categoría que directamente no existe en el catálogo.
     token = _register_and_get_token("categoria-no-disponible@example.com")
     payload = _condition_based_payload(
-        entry_rules=[{"category": "stochastic", "condition_type": "stochastic_above_80", "params": {}}]
+        entry_rules=[[{"category": "stochastic", "condition_type": "stochastic_above_80", "params": {}}]]
     )
     response = client.post("/strategies", json=payload, headers=_auth_headers(token))
 
@@ -400,9 +402,70 @@ def test_update_condition_based_strategy_regenerates_description():
 
     response = client.patch(
         f"/strategies/{strategy_id}",
-        json={"entry_rules": [{"category": "ema", "condition_type": "price_above", "params": {"period": 50}}]},
+        json={"entry_rules": [[{"category": "ema", "condition_type": "price_above", "params": {"period": 50}}]]},
         headers=_auth_headers(token),
     )
 
     assert response.status_code == 200
     assert response.json()["entry_conditions"] == "Precio > EMA50"
+
+
+def test_create_condition_based_strategy_with_or_groups_describes_and_runs():
+    token = _register_and_get_token("grupos-or@example.com")
+    payload = _condition_based_payload(
+        entry_rules=[
+            [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}],
+            [{"category": "rsi", "condition_type": "rsi_below_30", "params": {}}],
+        ],
+        exit_rules=[[{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}]],
+    )
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["entry_rules"]) == 2
+    assert " O " in body["entry_conditions"]
+    assert body["entry_conditions"].count("(") == 2  # cada grupo entre paréntesis
+    assert len(body["backtest_runs"]) == 1
+
+
+def test_condition_based_strategy_rejects_empty_group():
+    token = _register_and_get_token("grupo-vacio@example.com")
+    payload = _condition_based_payload(entry_rules=[[]])
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    # Un grupo vacío no cuenta como condición: sigue faltando al menos una.
+    assert response.status_code == 422
+
+
+def test_legacy_flat_entry_rules_are_normalized_and_still_run():
+    # Estrategias guardadas antes de que existieran los grupos tienen entry_rules como
+    # lista plana de condiciones en la DB (no lista de grupos). El GET debe devolverlas
+    # ya normalizadas como un único grupo, y un backtest nuevo debe correr igual que
+    # siempre (ver normalize_rule_groups).
+    token = _register_and_get_token("legacy-flat@example.com")
+    created = client.post("/strategies", json=_condition_based_payload(), headers=_auth_headers(token))
+    strategy_id = created.json()["id"]
+
+    db = SessionLocal()
+    try:
+        strategy = db.query(SavedStrategy).filter(SavedStrategy.id == strategy_id).one()
+        strategy.entry_rules = [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12, "period_b": 26}}]
+        strategy.exit_rules = [{"category": "ema", "condition_type": "cross_below", "params": {"period_a": 12, "period_b": 26}}]
+        db.commit()
+    finally:
+        db.close()
+
+    detail = client.get(f"/strategies/{strategy_id}", headers=_auth_headers(token))
+    assert detail.status_code == 200
+    assert detail.json()["entry_rules"] == [
+        [{"category": "ema", "condition_type": "cross_above", "params": {"period_a": 12.0, "period_b": 26.0}}]
+    ]
+
+    run = client.post(
+        f"/strategies/{strategy_id}/backtests",
+        json={"symbol": "BTCUSDT", "timeframe": "1h", "initial_equity": 10_000.0},
+        headers=_auth_headers(token),
+    )
+    assert run.status_code == 200
+    assert run.json()["num_trades"] > 0

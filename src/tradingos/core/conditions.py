@@ -186,6 +186,29 @@ def validate_condition(condition: Condition) -> None:
         raise ValueError(f"faltan parámetros para '{condition.condition_type}': {missing}")
 
 
+def normalize_rule_groups(raw: list) -> list[list[Condition]]:
+    """`entry_rules`/`exit_rules` aceptan dos formas: la vieja, una lista plana de
+    condiciones (todas en Y — lo único que existía antes de los grupos), y la nueva, una
+    lista de grupos donde cada grupo es una lista de condiciones (Y dentro del grupo, O
+    entre grupos). Esta función normaliza ambas a la forma nueva, para que el resto del
+    motor (evaluación, descripción, cálculo de indicadores) solo tenga que lidiar con una
+    representación — así las estrategias guardadas antes de que existieran los grupos
+    (forma plana) se siguen evaluando exactamente igual que siempre, como un único grupo.
+    """
+    if not raw:
+        return []
+    if isinstance(raw[0], dict):
+        # Forma vieja: lista plana de condiciones -> un solo grupo (Y de todas).
+        return [[Condition.model_validate(c) for c in raw]]
+    return [[Condition.model_validate(c) for c in group] for group in raw]
+
+
+def validate_rule_groups(groups: list[list[Condition]]) -> None:
+    for group in groups:
+        for condition in group:
+            validate_condition(condition)
+
+
 def required_ema_periods(conditions: list[Condition]) -> set[int]:
     periods: set[int] = set()
     for condition in conditions:
@@ -463,6 +486,12 @@ def evaluate_condition(condition: Condition, context: StrategyContext) -> bool:
     return evaluator(condition, context)
 
 
+def evaluate_rule_groups(groups: list[list[Condition]], context: StrategyContext) -> bool:
+    """True si CUALQUIER grupo tiene TODAS sus condiciones cumplidas (O entre grupos, Y
+    dentro de cada uno). Con un solo grupo esto es exactamente el Y-de-todas de antes."""
+    return any(all(evaluate_condition(c, context) for c in group) for group in groups)
+
+
 def compute_required_indicators(data: pd.DataFrame, conditions: list[Condition]) -> pd.DataFrame:
     """Agrega al DataFrame las columnas que las condiciones referencian, calculando cada
     indicador una sola vez aunque haya varias condiciones de la misma categoría."""
@@ -537,3 +566,11 @@ def describe_conditions(conditions: list[Condition]) -> str:
     if not conditions:
         return ""
     return " Y ".join(describe_condition(c) for c in conditions)
+
+
+def describe_rule_groups(groups: list[list[Condition]]) -> str:
+    if not groups:
+        return ""
+    if len(groups) == 1:
+        return describe_conditions(groups[0])
+    return " O ".join(f"({describe_conditions(group)})" for group in groups)
