@@ -1,6 +1,6 @@
 import pandas as pd
 
-from tradingos.core.indicators import atr, bollinger_bands, ema, macd, rsi, sma
+from tradingos.core.indicators import adx, atr, bollinger_bands, ema, macd, rsi, sma
 
 
 def test_sma_basic():
@@ -60,3 +60,39 @@ def test_bollinger_bands_widen_with_volatility():
     volatile = pd.Series([100.0, 110.0] * 13)
     _, upper_v, lower_v = bollinger_bands(volatile, period=20, num_std=2.0)
     assert (upper_v.dropna() > lower_v.dropna()).all()
+
+
+def test_adx_strong_uptrend_has_higher_plus_di():
+    close = pd.Series([100.0 + i for i in range(60)])
+    high = close + 0.5
+    low = close - 0.5
+
+    adx_line, plus_di, minus_di = adx(high, low, close, period=14)
+
+    assert plus_di.dropna().iloc[-1] > minus_di.dropna().iloc[-1]
+    # Tendencia monótona sin ninguna pullback: es el caso de máxima fuerza de tendencia.
+    assert adx_line.dropna().iloc[-1] > 50
+
+
+def test_adx_handles_flat_series_without_dividing_by_zero():
+    flat = pd.Series([100.0] * 30)
+
+    adx_line, plus_di, minus_di = adx(flat, flat, flat, period=14)
+
+    # Sin ningún rango, +DI/-DI/ADX quedan indefinidos (NaN) en vez de explotar por
+    # división por cero.
+    assert adx_line.isna().all()
+    assert plus_di.isna().all()
+    assert minus_di.isna().all()
+
+
+def test_adx_bounds_with_mixed_movement():
+    close = pd.Series([10, 12, 11, 13, 12, 15, 14, 16, 15, 18, 17, 19, 20, 22, 21, 23, 22, 25, 24, 27], dtype=float)
+    high = close + 1
+    low = close - 1
+
+    adx_line, plus_di, minus_di = adx(high, low, close, period=14)
+
+    assert (plus_di.dropna() >= 0).all() and (plus_di.dropna() <= 100).all()
+    assert (minus_di.dropna() >= 0).all() and (minus_di.dropna() <= 100).all()
+    assert (adx_line.dropna() >= 0).all() and (adx_line.dropna() <= 100).all()

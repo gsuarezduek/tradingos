@@ -52,3 +52,37 @@ def bollinger_bands(series: pd.Series, period: int = 20, num_std: float = 2.0) -
     upper = middle + num_std * std
     lower = middle - num_std * std
     return middle, upper, lower
+
+
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Devuelve (ADX, +DI, -DI) por el método de Wilder — mismo suavizado que `atr`."""
+    prev_close = close.shift(1)
+    up_move = high - high.shift(1)
+    down_move = low.shift(1) - low
+
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    smoothed_tr = true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    smoothed_plus_dm = plus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    smoothed_minus_dm = minus_dm.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    plus_di = 100 * smoothed_plus_dm / smoothed_tr.replace(0, float("nan"))
+    minus_di = 100 * smoothed_minus_dm / smoothed_tr.replace(0, float("nan"))
+
+    # di_sum == 0 real (sin movimiento direccional) -> DX 0, no división por cero; NaN
+    # de warm-up se preserva porque NaN != 0 es True y .where() no lo toca.
+    di_sum = plus_di + minus_di
+    dx = 100 * (plus_di - minus_di).abs() / di_sum.where(di_sum != 0, 1.0)
+    adx_line = dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+    return adx_line, plus_di, minus_di

@@ -5,6 +5,7 @@ from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.core.conditions import (
     Condition,
+    evaluate_adx_condition,
     evaluate_atr_condition,
     evaluate_bollinger_condition,
     evaluate_ema_condition,
@@ -209,6 +210,50 @@ def test_bollinger_conditions():
     # índice 0: no hay barra anterior -> False, no excepción
     assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="returns_inside_band"), _context(history, 0)) is False
     assert evaluate_bollinger_condition(Condition(category="bollinger", condition_type="returns_inside_band"), _context(history, 2)) is True
+
+
+def test_adx_conditions():
+    history = pd.DataFrame(
+        {
+            "close": [0.0] * 4,
+            "adx_14": [15.0, 30.0, 45.0, 40.0],
+            "di_plus_14": [20.0, 30.0, 15.0, 15.0],
+            "di_minus_14": [25.0, 10.0, 30.0, 30.0],
+        }
+    )
+
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_above_25"), _context(history, 1)) is True
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_above_40"), _context(history, 2)) is True
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_below_20"), _context(history, 0)) is True
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="di_plus_above_minus"), _context(history, 1)) is True
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="di_minus_above_plus"), _context(history, 2)) is True
+    # índice 0: no hay barra anterior -> False, no excepción
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_increasing"), _context(history, 0)) is False
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_increasing"), _context(history, 1)) is True
+    assert evaluate_adx_condition(Condition(category="adx", condition_type="adx_decreasing"), _context(history, 3)) is True
+
+
+def test_condition_based_strategy_combines_adx_conditions(synthetic_ohlcv):
+    config = StrategyConfig(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        stop_loss_pct=0.05,
+        risk_per_trade=0.01,
+        entry_rules=[
+            {"category": "adx", "condition_type": "adx_above_25", "params": {}},
+            {"category": "adx", "condition_type": "di_plus_above_minus", "params": {}},
+        ],
+        exit_rules=[{"category": "adx", "condition_type": "di_minus_above_plus", "params": {}}],
+    )
+    strategy_cls = get_strategy("condition_based")
+    engine = BacktestEngine(strategy_cls(config), SimulatedBroker(BrokerSimConfig()), initial_equity=10_000.0)
+
+    result = engine.run(synthetic_ohlcv)
+
+    # No se afirma un número de trades específico, solo que el motor generalizado corre
+    # sin romperse con ADX/DI+/DI-.
+    assert isinstance(result.trades, list)
+    assert not result.equity_curve.empty
 
 
 def test_condition_based_strategy_combines_macd_and_bollinger_conditions(synthetic_ohlcv):

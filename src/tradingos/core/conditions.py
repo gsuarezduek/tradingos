@@ -5,13 +5,20 @@ from typing import Any
 import pandas as pd
 from pydantic import BaseModel
 
-from tradingos.core.indicators import atr as atr_indicator, bollinger_bands, ema, macd as macd_indicator, rsi as rsi_indicator
+from tradingos.core.indicators import (
+    adx as adx_indicator,
+    atr as atr_indicator,
+    bollinger_bands,
+    ema,
+    macd as macd_indicator,
+    rsi as rsi_indicator,
+)
 from tradingos.core.strategy import StrategyContext
 
 # Períodos/ventanas fijos para las categorías sin parámetros expuestos al usuario (RSI,
-# Volumen, Acción del Precio, ATR, MACD, Bollinger): el usuario pidió condiciones con
-# umbrales concretos (ej. "RSI > 70"), no un indicador parametrizable como EMA — así que
-# los períodos son una constante del motor, no un campo de Condition.params.
+# Volumen, Acción del Precio, ATR, MACD, Bollinger, ADX): el usuario pidió condiciones
+# con umbrales concretos (ej. "RSI > 70"), no un indicador parametrizable como EMA — así
+# que los períodos son una constante del motor, no un campo de Condition.params.
 _RSI_PERIOD = 14
 _ATR_PERIOD = 14
 _ATR_AVG_WINDOW = 14
@@ -24,6 +31,7 @@ _MACD_SIGNAL_PERIOD = 9
 _BOLLINGER_PERIOD = 20
 _BOLLINGER_NUM_STD = 2.0
 _BOLLINGER_WIDTH_AVG_WINDOW = 20
+_ADX_PERIOD = 14
 
 _RSI_COL = f"rsi_{_RSI_PERIOD}"
 _ATR_COL = f"atr_{_ATR_PERIOD}"
@@ -40,6 +48,9 @@ _BB_UPPER_COL = "bb_upper"
 _BB_LOWER_COL = "bb_lower"
 _BB_WIDTH_COL = "bb_width"
 _BB_WIDTH_AVG_COL = f"bb_width_avg_{_BOLLINGER_WIDTH_AVG_WINDOW}"
+_ADX_COL = f"adx_{_ADX_PERIOD}"
+_DI_PLUS_COL = f"di_plus_{_ADX_PERIOD}"
+_DI_MINUS_COL = f"di_minus_{_ADX_PERIOD}"
 
 _EMA_CONDITION_TYPES: list[dict[str, Any]] = [
     {"type": "price_above", "label": "Precio > EMA", "params": ["period"]},
@@ -146,7 +157,7 @@ CONDITION_CATALOG: list[dict[str, Any]] = [
     },
     {"category": "atr", "label": "ATR", "available": True, "condition_types": _ATR_CONDITION_TYPES},
     {"category": "bollinger", "label": "Bollinger", "available": True, "condition_types": _BOLLINGER_CONDITION_TYPES},
-    {"category": "adx", "label": "ADX", "available": False, "condition_types": _ADX_CONDITION_TYPES},
+    {"category": "adx", "label": "ADX", "available": True, "condition_types": _ADX_CONDITION_TYPES},
 ]
 
 _AVAILABLE_CATEGORIES = {c["category"] for c in CONDITION_CATALOG if c["available"]}
@@ -406,6 +417,33 @@ def evaluate_bollinger_condition(condition: Condition, context: StrategyContext)
     raise ValueError(f"tipo de condición desconocido para Bollinger: '{condition_type}'")
 
 
+def evaluate_adx_condition(condition: Condition, context: StrategyContext) -> bool:
+    bar = context.bar
+    idx = context.current_index
+    condition_type = condition.condition_type
+
+    if condition_type == "adx_above_25":
+        return bool(bar[_ADX_COL] > 25)
+    if condition_type == "adx_above_40":
+        return bool(bar[_ADX_COL] > 40)
+    if condition_type == "adx_below_20":
+        return bool(bar[_ADX_COL] < 20)
+    if condition_type == "di_plus_above_minus":
+        return bool(bar[_DI_PLUS_COL] > bar[_DI_MINUS_COL])
+    if condition_type == "di_minus_above_plus":
+        return bool(bar[_DI_MINUS_COL] > bar[_DI_PLUS_COL])
+
+    if condition_type in ("adx_increasing", "adx_decreasing"):
+        if idx == 0:
+            return False
+        prev_adx = context.history.iloc[idx - 1][_ADX_COL]
+        if condition_type == "adx_increasing":
+            return bool(bar[_ADX_COL] > prev_adx)
+        return bool(bar[_ADX_COL] < prev_adx)
+
+    raise ValueError(f"tipo de condición desconocido para ADX: '{condition_type}'")
+
+
 _EVALUATORS = {
     "ema": evaluate_ema_condition,
     "rsi": evaluate_rsi_condition,
@@ -414,6 +452,7 @@ _EVALUATORS = {
     "atr": evaluate_atr_condition,
     "macd": evaluate_macd_condition,
     "bollinger": evaluate_bollinger_condition,
+    "adx": evaluate_adx_condition,
 }
 
 
@@ -459,6 +498,10 @@ def compute_required_indicators(data: pd.DataFrame, conditions: list[Condition])
         data[_BB_WIDTH_COL] = (data[_BB_UPPER_COL] - data[_BB_LOWER_COL]) / data[_BB_MIDDLE_COL]
         data[_BB_WIDTH_AVG_COL] = (
             data[_BB_WIDTH_COL].rolling(window=_BOLLINGER_WIDTH_AVG_WINDOW, min_periods=_BOLLINGER_WIDTH_AVG_WINDOW).mean()
+        )
+    if "adx" in categories:
+        data[_ADX_COL], data[_DI_PLUS_COL], data[_DI_MINUS_COL] = adx_indicator(
+            data["high"], data["low"], data["close"], _ADX_PERIOD
         )
 
     return data
