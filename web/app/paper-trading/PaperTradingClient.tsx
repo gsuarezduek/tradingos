@@ -1,15 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
 import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
-
-// Único timeframe que soporta el tick de paper trading hoy (ver LOOKBACK_BARS en
-// paper_trading/tick.py, que asume velas de 1h). Una estrategia puede declarar otras
-// temporalidades para backtest, pero solo se puede paper-tradear en esta.
-const PAPER_TRADING_TIMEFRAME = "1h";
 
 export interface SessionSummary {
   id: number;
@@ -80,11 +75,10 @@ export function PaperTradingClient({
   const [sessions, setSessions] = useState<SessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(initialError);
 
-  const paperTradeable = useMemo(() => strategies.filter((s) => s.timeframes.includes(PAPER_TRADING_TIMEFRAME)), [strategies]);
-
-  const [strategyId, setStrategyId] = useState<number | null>(paperTradeable[0]?.id ?? null);
+  const [strategyId, setStrategyId] = useState<number | null>(strategies[0]?.id ?? null);
   const selectedStrategy = strategies.find((s) => s.id === strategyId) ?? null;
-  const [symbol, setSymbol] = useState<string>(paperTradeable[0]?.symbols[0] ?? "");
+  const [symbol, setSymbol] = useState<string>(strategies[0]?.symbols[0] ?? "");
+  const [timeframe, setTimeframe] = useState<string>(strategies[0]?.timeframes[0] ?? "");
   const [initialEquity, setInitialEquity] = useState(10000);
 
   const [showForm, setShowForm] = useState(initialSessions.length === 0);
@@ -95,6 +89,7 @@ export function PaperTradingClient({
     setStrategyId(id);
     const strategy = strategies.find((s) => s.id === id);
     setSymbol(strategy?.symbols[0] ?? "");
+    setTimeframe(strategy?.timeframes[0] ?? "");
   }
 
   async function reloadSessions() {
@@ -108,7 +103,7 @@ export function PaperTradingClient({
   }
 
   async function createSession() {
-    if (strategyId === null || !symbol) return;
+    if (strategyId === null || !symbol || !timeframe) return;
     setCreating(true);
     setCreateError(null);
 
@@ -119,7 +114,7 @@ export function PaperTradingClient({
         body: JSON.stringify({
           strategy_id: strategyId,
           symbol,
-          timeframe: PAPER_TRADING_TIMEFRAME,
+          timeframe,
           initial_equity: initialEquity,
         }),
       });
@@ -154,8 +149,8 @@ export function PaperTradingClient({
               actualiza el equity, la posición abierta y las operaciones cerradas.
               <br />
               <br />
-              Solo se puede paper-tradear en 1h por ahora, y solo mercados que la estrategia declaró en
-              Estrategias. Si no ves una estrategia acá, o su símbolo, revisá su configuración ahí primero.
+              Símbolo y temporalidad solo pueden ser los que la estrategia declaró en Estrategias. Si no ves
+              una estrategia acá, o el mercado/temporalidad que buscás, revisá su configuración ahí primero.
               <br />
               <br />
               Podés tener varias sesiones corriendo en simultáneo. Esta pantalla lista todas tus sesiones
@@ -171,7 +166,7 @@ export function PaperTradingClient({
             live={activeCount > 0}
             label={activeCount > 0 ? `${activeCount} sesión(es) activa(s)` : "Sin sesiones activas"}
           />
-          {paperTradeable.length > 0 && (
+          {strategies.length > 0 && (
             <button
               onClick={() => setShowForm((v) => !v)}
               className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white"
@@ -206,18 +201,7 @@ export function PaperTradingClient({
         </div>
       )}
 
-      {!strategiesError && strategies.length > 0 && paperTradeable.length === 0 && (
-        <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
-          Ninguna de tus estrategias declara la temporalidad 1h (la única que soporta paper trading por
-          ahora).{" "}
-          <Link href="/estrategias" className="font-semibold text-ink underline">
-            Agregala en Estrategias
-          </Link>
-          .
-        </div>
-      )}
-
-      {showForm && paperTradeable.length > 0 && (
+      {showForm && strategies.length > 0 && (
         <div className="rounded-3xl bg-panel p-8">
           <h2 className="text-lg font-bold text-ink">Iniciar sesión de paper trading</h2>
 
@@ -229,7 +213,7 @@ export function PaperTradingClient({
                 onChange={(e) => selectStrategy(Number(e.target.value))}
                 className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
               >
-                {paperTradeable.map((s) => (
+                {strategies.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                   </option>
@@ -252,19 +236,24 @@ export function PaperTradingClient({
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-muted">Temporalidad</span>
-              <input
-                type="text"
-                value={PAPER_TRADING_TIMEFRAME}
-                disabled
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted"
-              />
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              >
+                {(selectedStrategy?.timeframes ?? []).map((tf) => (
+                  <option key={tf} value={tf}>
+                    {tf}
+                  </option>
+                ))}
+              </select>
             </label>
             <Field label="Equity inicial ($)" value={initialEquity} onChange={setInitialEquity} />
           </div>
 
           <button
             onClick={createSession}
-            disabled={creating || strategyId === null || !symbol}
+            disabled={creating || strategyId === null || !symbol || !timeframe}
             className="mt-6 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {creating ? "Iniciando…" : "Iniciar paper trading"}
@@ -291,6 +280,7 @@ export function PaperTradingClient({
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
                   <th className="pb-2 pr-4 font-medium">Estrategia</th>
                   <th className="pb-2 pr-4 font-medium">Símbolo</th>
+                  <th className="pb-2 pr-4 font-medium">Temporalidad</th>
                   <th className="pb-2 pr-4 font-medium">Estado</th>
                   <th className="pb-2 pr-4 font-medium">Equity inicial</th>
                   <th className="pb-2 pr-4 font-medium">Equity actual</th>
@@ -315,6 +305,7 @@ export function PaperTradingClient({
                         )}
                       </td>
                       <td className="py-3 pr-4 text-ink">{s.symbol}</td>
+                      <td className="py-3 pr-4 text-ink">{s.timeframe}</td>
                       <td className="py-3 pr-4">
                         <StatusBadge status={s.status} />
                       </td>

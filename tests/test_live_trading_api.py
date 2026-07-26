@@ -69,6 +69,37 @@ def test_create_session_requires_auth():
 def test_create_session_rejects_unsupported_timeframe(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token = _register_and_get_token("tf@example.com")
+    strategy = _create_strategy(token)
+    connection = _create_connection(token, monkeypatch)
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"], timeframe="2h"),  # no está en SUPPORTED_TIMEFRAMES
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+
+
+def test_create_session_rejects_timeframe_faster_than_cron(monkeypatch):
+    # El cron de trading en vivo corre cada 15m; algo más rápido (5m acá) se podría
+    # perder en silencio entre ticks — ver _MIN_LIVE_TRADING_INTERVAL_MS.
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("tooFast@example.com")
+    strategy = _create_strategy(token, timeframes=["1h", "5m"])
+    connection = _create_connection(token, monkeypatch)
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"], timeframe="5m"),
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+    assert "cron" in response.json()["detail"]
+
+
+def test_create_session_supports_timeframes_other_than_1h(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("tf4h@example.com")
     strategy = _create_strategy(token, timeframes=["1h", "4h"])
     connection = _create_connection(token, monkeypatch)
 
@@ -77,7 +108,8 @@ def test_create_session_rejects_unsupported_timeframe(monkeypatch):
         json=_session_payload(strategy["id"], connection["id"], timeframe="4h"),
         headers=_auth_headers(token),
     )
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["timeframe"] == "4h"
 
 
 def test_create_session_rejects_unknown_strategy(monkeypatch):

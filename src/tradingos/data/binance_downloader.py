@@ -15,14 +15,19 @@ BASE_URL = "https://data-api.binance.vision/api/v3/klines"
 EXCHANGE_INFO_URL = "https://data-api.binance.vision/api/v3/exchangeInfo"
 MAX_LIMIT = 1000
 
-# ms por intervalo, para paginar sin depender de que Binance devuelva el batch completo
-_INTERVAL_MS = {
+# ms por intervalo, para paginar sin depender de que Binance devuelva el batch completo.
+# Debe cubrir el mismo conjunto que SUPPORTED_TIMEFRAMES en backtest/engine.py — si se
+# agrega una temporalidad ahí, agregarla acá también o fetch_klines la va a rechazar.
+INTERVAL_MS = {
     "1m": 60_000,
+    "3m": 3 * 60_000,
     "5m": 5 * 60_000,
     "15m": 15 * 60_000,
+    "30m": 30 * 60_000,
     "1h": 60 * 60_000,
     "4h": 4 * 60 * 60_000,
     "1d": 24 * 60 * 60_000,
+    "1w": 7 * 24 * 60 * 60_000,
 }
 
 _COLUMNS = (
@@ -49,12 +54,12 @@ def _to_ms(dt: datetime) -> int:
 
 def fetch_klines(symbol: str, interval: str, start: datetime, end: datetime | None = None) -> pd.DataFrame:
     """Descarga velas históricas de la API pública de Binance (sin autenticación), paginando."""
-    if interval not in _INTERVAL_MS:
-        raise ValueError(f"interval no soportado: {interval}. Usar uno de {sorted(_INTERVAL_MS)}")
+    if interval not in INTERVAL_MS:
+        raise ValueError(f"interval no soportado: {interval}. Usar uno de {sorted(INTERVAL_MS)}")
 
     start_ms = _to_ms(start)
     end_ms = _to_ms(end) if end else _to_ms(datetime.now(timezone.utc))
-    step_ms = _INTERVAL_MS[interval] * MAX_LIMIT
+    step_ms = INTERVAL_MS[interval] * MAX_LIMIT
 
     frames: list[pd.DataFrame] = []
     cursor = start_ms
@@ -77,7 +82,7 @@ def fetch_klines(symbol: str, interval: str, start: datetime, end: datetime | No
 
         frames.append(pd.DataFrame(batch, columns=_COLUMNS))
         last_open_time = batch[-1][0]
-        cursor = last_open_time + _INTERVAL_MS[interval]
+        cursor = last_open_time + INTERVAL_MS[interval]
         time.sleep(0.2)  # respetar rate limits de la API pública
 
     if not frames:

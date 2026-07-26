@@ -9,7 +9,7 @@ import tradingos.strategies  # noqa: F401  (registra las estrategias disponibles
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
 from tradingos.backtest.engine import BacktestEngine
 from tradingos.core.strategy import StrategyConfig, get_strategy
-from tradingos.data.binance_downloader import fetch_klines
+from tradingos.data.binance_downloader import INTERVAL_MS, fetch_klines
 from tradingos.db.models import PaperTrade, PaperTradingSession
 
 # Cada tick re-corre el motor completo sobre una ventana acotada en vez de mantener
@@ -17,16 +17,25 @@ from tradingos.db.models import PaperTrade, PaperTradingSession
 # miden ~8s en producción; esto es una fracción). Límite conocido: una posición abierta
 # por más tiempo que la ventana "se pierde" al re-correr — riesgo bajo para una
 # estrategia de cruce de medias, aceptado como simplificación de v1.
+#
+# LOOKBACK_BARS es en cantidad de velas, no en tiempo: se traduce a una ventana de reloj
+# según la temporalidad de cada sesión (_lookback_start), así que da la misma profundidad
+# de indicadores/replay sin importar si la sesión es en 1m o en 1w.
 LOOKBACK_BARS = 1500
 _EQUITY_CURVE_POINTS = 200
+
+
+def _lookback_start(timeframe: str) -> datetime:
+    # Margen generoso del 20% sobre LOOKBACK_BARS velas: de sobra para cubrir gaps.
+    bar_duration = timedelta(milliseconds=INTERVAL_MS[timeframe])
+    return datetime.now(timezone.utc) - bar_duration * LOOKBACK_BARS * 1.2
 
 
 def run_tick_for_session(db: Session, session: PaperTradingSession) -> None:
     strategy_cls = get_strategy(session.strategy)
     config = StrategyConfig.model_validate(session.config)
 
-    # Margen generoso sobre LOOKBACK_BARS horas: de sobra para timeframes >= 1h.
-    start = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_BARS * 1.2)
+    start = _lookback_start(session.timeframe)
     data = fetch_klines(session.symbol, session.timeframe, start).tail(LOOKBACK_BARS).reset_index(drop=True)
 
     strategy = strategy_cls(config)

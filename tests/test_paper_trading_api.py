@@ -99,6 +99,22 @@ def test_create_session_rejects_another_users_strategy(monkeypatch):
 def test_create_session_rejects_unsupported_timeframe(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token = _register_and_get_token("tf@example.com")
+    strategy = _create_strategy(token)
+
+    response = client.post(
+        "/paper-trading/sessions",
+        json=_session_payload(strategy["id"], timeframe="2h"),  # no está en SUPPORTED_TIMEFRAMES
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+
+
+def test_create_session_supports_timeframes_other_than_1h(monkeypatch):
+    # Paper trading pide velas en vivo a Binance (no un dataset local), así que una
+    # temporalidad declarada por la estrategia que no sea la de su config base también
+    # tiene que poder paper-tradearse.
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("tf4h@example.com")
     strategy = _create_strategy(token, timeframes=["1h", "4h"])
 
     response = client.post(
@@ -106,7 +122,8 @@ def test_create_session_rejects_unsupported_timeframe(monkeypatch):
         json=_session_payload(strategy["id"], timeframe="4h"),
         headers=_auth_headers(token),
     )
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.json()["timeframe"] == "4h"
 
 
 def test_create_session_rejects_symbol_not_declared_by_strategy(monkeypatch):

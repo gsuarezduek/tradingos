@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
+from tradingos.backtest.engine import SUPPORTED_TIMEFRAMES
 from tradingos.core.strategy import StrategyConfig
 from tradingos.data.binance_downloader import fetch_spot_symbols
 from tradingos.db.models import PaperTrade, PaperTradingSession, SavedStrategy, User
@@ -16,10 +17,6 @@ from tradingos.db.session import get_db
 from tradingos.paper_trading.tick import run_tick_for_session
 
 router = APIRouter(prefix="/paper-trading", tags=["paper-trading"])
-
-# El cálculo de ventana en paper_trading/tick.py (LOOKBACK_BARS en horas) asume velas de
-# 1h; soportar otros timeframes implica ajustar ese cálculo primero.
-_SUPPORTED_TIMEFRAME = "1h"
 
 # La lista de símbolos de Binance (~2000+) cambia con muy poca frecuencia; cachearla
 # evita pegarle a Binance en cada tecla que el usuario tipea en el autocomplete.
@@ -127,8 +124,11 @@ def list_symbols(user: User = Depends(get_current_user)) -> list[str]:
 def create_session(
     request: CreateSessionRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> SessionResponse:
-    if request.timeframe != _SUPPORTED_TIMEFRAME:
-        raise HTTPException(status_code=400, detail=f"timeframe no soportado todavía: solo '{_SUPPORTED_TIMEFRAME}'")
+    if request.timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"temporalidad no soportada: {request.timeframe} (soportadas: {sorted(SUPPORTED_TIMEFRAMES)})",
+        )
 
     strategy = _get_owned_strategy(request.strategy_id, user, db)
     if strategy.status != "active":

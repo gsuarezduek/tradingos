@@ -7,16 +7,22 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
+from tradingos.backtest.engine import SUPPORTED_TIMEFRAMES
 from tradingos.core.strategy import StrategyConfig
+from tradingos.data.binance_downloader import INTERVAL_MS
 from tradingos.db.models import BrokerConnection, LiveOrder, LiveTrade, LiveTradingSession, SavedStrategy, User
 from tradingos.db.session import get_db
 from tradingos.live_trading.tick import run_tick_for_session
 
 router = APIRouter(prefix="/live-trading", tags=["live-trading"])
 
-# Misma limitación que paper trading (ver _SUPPORTED_TIMEFRAME en api/routers/
-# paper_trading.py): el tick asume velas de 1h.
-_SUPPORTED_TIMEFRAME = "1h"
+# El cron de trading en vivo corre cada 15 minutos (scripts/run_live_trading_tick.py,
+# configurado en Railway). Una temporalidad más rápida que eso es riesgosa acá aunque no
+# lo sea en paper trading: una operación que abre y cierra completa entre dos ticks nunca
+# pasa por el motor de reconciliación como "actualmente abierta" y se pierde en silencio
+# (ver el docstring de run_tick_for_session en live_trading/tick.py). Mientras el cron no
+# corra más seguido, no se puede ofrecer nada más rápido que esto acá.
+_MIN_LIVE_TRADING_INTERVAL_MS = 15 * 60_000
 
 
 class CreateSessionRequest(BaseModel):
@@ -123,8 +129,20 @@ def _get_owned_connection(connection_id: int, user: User, db: Session) -> Broker
 def create_session(
     request: CreateSessionRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> SessionResponse:
-    if request.timeframe != _SUPPORTED_TIMEFRAME:
-        raise HTTPException(status_code=400, detail=f"timeframe no soportado todavía: solo '{_SUPPORTED_TIMEFRAME}'")
+    if request.timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"temporalidad no soportada: {request.timeframe} (soportadas: {sorted(SUPPORTED_TIMEFRAMES)})",
+        )
+    if INTERVAL_MS[request.timeframe] < _MIN_LIVE_TRADING_INTERVAL_MS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{request.timeframe}' es más rápida que el intervalo del cron de trading en vivo (15m) — "
+                "una operación podría abrir y cerrar sin que el sistema la vea nunca. Usá 15m o una "
+                "temporalidad mayor, o paper-tradeala mientras tanto."
+            ),
+        )
 
     strategy = _get_owned_strategy(request.strategy_id, user, db)
     connection = _get_owned_connection(request.broker_connection_id, user, db)

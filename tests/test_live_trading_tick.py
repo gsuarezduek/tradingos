@@ -53,7 +53,17 @@ def _make_strategy(db, user: User, *, symbol: str = "BTCUSDT") -> SavedStrategy:
     return strategy
 
 
-def _make_session(db, user, strategy, connection, *, symbol: str = "BTCUSDT", status: str = "active", current_position=None) -> LiveTradingSession:
+def _make_session(
+    db,
+    user,
+    strategy,
+    connection,
+    *,
+    symbol: str = "BTCUSDT",
+    timeframe: str = "1h",
+    status: str = "active",
+    current_position=None,
+) -> LiveTradingSession:
     session = LiveTradingSession(
         user_id=user.id,
         strategy_id=strategy.id,
@@ -61,7 +71,7 @@ def _make_session(db, user, strategy, connection, *, symbol: str = "BTCUSDT", st
         exchange=connection.exchange,
         strategy=strategy.strategy_type,
         symbol=symbol,
-        timeframe="1h",
+        timeframe=timeframe,
         config=strategy.config,
         status=status,
         current_position=current_position,
@@ -270,5 +280,36 @@ def test_run_all_active_only_processes_active_sessions(monkeypatch, synthetic_oh
         db.refresh(stopped)
         assert active.last_tick_at is not None
         assert stopped.last_tick_at is None
+    finally:
+        db.close()
+
+
+def test_lookback_start_scales_wall_clock_window_with_timeframe():
+    from datetime import datetime, timedelta, timezone as tz
+
+    from tradingos.data.binance_downloader import INTERVAL_MS
+
+    now = datetime.now(tz.utc)
+    for timeframe in ("1m", "15m", "1h", "1d"):
+        start = tick_module._lookback_start(timeframe)
+        expected = timedelta(milliseconds=INTERVAL_MS[timeframe] * tick_module.LOOKBACK_BARS * 1.2)
+        actual = now - start
+        assert abs((actual - expected).total_seconds()) < 5
+
+
+def test_run_tick_works_for_non_1h_timeframe(monkeypatch, synthetic_ohlcv):
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: synthetic_ohlcv)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+
+    db = SessionLocal()
+    try:
+        user = _make_user(db, "tf4h@example.com")
+        connection = _make_connection(db, user)
+        strategy = _make_strategy(db, user)
+        session = _make_session(db, user, strategy, connection, timeframe="4h")
+
+        tick_module.run_tick_for_session(db, session)
+
+        assert session.last_tick_at is not None
     finally:
         db.close()

@@ -13,8 +13,10 @@ def _make_user(db, email: str) -> User:
     return user
 
 
-def _make_session(db, user: User, *, symbol: str = "BTCUSDT", status: str = "active") -> PaperTradingSession:
-    config = default_config(symbol=symbol)
+def _make_session(
+    db, user: User, *, symbol: str = "BTCUSDT", timeframe: str = "1h", status: str = "active"
+) -> PaperTradingSession:
+    config = default_config(symbol=symbol, timeframe=timeframe)
     session = PaperTradingSession(
         user_id=user.id,
         strategy="ma_crossover",
@@ -130,5 +132,37 @@ def test_run_all_active_survives_one_session_failing(monkeypatch, synthetic_ohlc
         db.refresh(broken_session)
         assert ok_session.last_tick_at is not None
         assert broken_session.last_tick_at is None
+    finally:
+        db.close()
+
+
+def test_lookback_start_scales_wall_clock_window_with_timeframe():
+    from datetime import datetime, timedelta, timezone as tz
+
+    from tradingos.data.binance_downloader import INTERVAL_MS
+
+    now = datetime.now(tz.utc)
+    for timeframe in ("1m", "15m", "1h", "1d"):
+        start = tick_module._lookback_start(timeframe)
+        expected = timedelta(milliseconds=INTERVAL_MS[timeframe] * tick_module.LOOKBACK_BARS * 1.2)
+        actual = now - start
+        # Margen de unos segundos por el tiempo que tarda en correr el propio test.
+        assert abs((actual - expected).total_seconds()) < 5
+
+
+def test_run_tick_for_session_works_for_non_1h_timeframe(monkeypatch, synthetic_ohlcv):
+    # session.timeframe es solo una etiqueta que se le pasa a fetch_klines (mockeado
+    # acá) y a _lookback_start — el resto del tick no asume nada sobre su valor.
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: synthetic_ohlcv)
+
+    db = SessionLocal()
+    try:
+        user = _make_user(db, "tf4h@example.com")
+        session = _make_session(db, user, timeframe="4h")
+
+        tick_module.run_tick_for_session(db, session)
+
+        assert session.last_tick_at is not None
+        assert session.current_equity > 0
     finally:
         db.close()

@@ -12,16 +12,22 @@ from tradingos.backtest.engine import BacktestEngine
 from tradingos.core.risk import initial_stop_loss, initial_take_profit, position_size
 from tradingos.core.strategy import StrategyConfig, get_strategy
 from tradingos.core.types import Side
-from tradingos.data.binance_downloader import fetch_klines
+from tradingos.data.binance_downloader import INTERVAL_MS, fetch_klines
 from tradingos.db import crypto
 from tradingos.db.models import LiveOrder, LiveTrade, LiveTradingSession
 
 # Mismo motor y misma ventana que paper_trading/tick.py — ver ese módulo para el porqué
-# de LOOKBACK_BARS y su límite conocido (una posición abierta más tiempo que la ventana
-# "sale de cuadro"). Acá ese límite es más delicado: si pasa, este tick simplemente deja
-# de tocar esa posición (ni la cierra ni abre una nueva) en vez de arriesgar una acción
-# equivocada con plata real — ver el bloque "posición no verificable" más abajo.
+# de LOOKBACK_BARS (en velas, no en tiempo) y su límite conocido (una posición abierta
+# más tiempo que la ventana "sale de cuadro"). Acá ese límite es más delicado: si pasa,
+# este tick simplemente deja de tocar esa posición (ni la cierra ni abre una nueva) en
+# vez de arriesgar una acción equivocada con plata real — ver el bloque "posición no
+# verificable" más abajo.
 LOOKBACK_BARS = 1500
+
+
+def _lookback_start(timeframe: str) -> datetime:
+    bar_duration = timedelta(milliseconds=INTERVAL_MS[timeframe])
+    return datetime.now(timezone.utc) - bar_duration * LOOKBACK_BARS * 1.2
 
 # initial_equity acá es solo un valor de referencia para que el motor pueda simular
 # (no se usa para dimensionar la orden real, que se calcula aparte contra el saldo
@@ -185,7 +191,7 @@ def run_tick_for_session(db: Session, session: LiveTradingSession) -> None:
     strategy_cls = get_strategy(session.strategy)
     config = StrategyConfig.model_validate(session.config)
 
-    start = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_BARS * 1.2)
+    start = _lookback_start(session.timeframe)
     data = fetch_klines(session.symbol, session.timeframe, start).tail(LOOKBACK_BARS).reset_index(drop=True)
 
     strategy = strategy_cls(config)

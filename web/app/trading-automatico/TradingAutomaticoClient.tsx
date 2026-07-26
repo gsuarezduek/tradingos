@@ -8,8 +8,28 @@ import { EXCHANGES } from "@/lib/exchanges";
 import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
 
-// Misma limitación que paper trading: el tick asume velas de 1h.
-const LIVE_TRADING_TIMEFRAME = "1h";
+// Duración de cada temporalidad en minutos — igual que INTERVAL_MS en
+// data/binance_downloader.py, en minutos en vez de ms.
+const TIMEFRAME_MINUTES: Record<string, number> = {
+  "1m": 1,
+  "3m": 3,
+  "5m": 5,
+  "15m": 15,
+  "30m": 30,
+  "1h": 60,
+  "4h": 240,
+  "1d": 1440,
+  "1w": 10080,
+};
+
+// El cron de trading en vivo corre cada 15 minutos: una temporalidad más rápida que eso
+// se podría perder en silencio entre ticks (ver el InfoGuide más abajo), así que ni
+// siquiera se ofrece como opción acá.
+const MIN_LIVE_TRADING_MINUTES = 15;
+
+function isLiveTradeable(timeframe: string): boolean {
+  return (TIMEFRAME_MINUTES[timeframe] ?? 0) >= MIN_LIVE_TRADING_MINUTES;
+}
 
 interface CurrentPosition {
   side: string;
@@ -83,15 +103,17 @@ export function TradingAutomaticoClient({
   const [sessions, setSessions] = useState<LiveSessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(sessionsError);
 
-  const liveTradeable = useMemo(() => strategies.filter((s) => s.timeframes.includes(LIVE_TRADING_TIMEFRAME)), [strategies]);
+  const liveTradeable = useMemo(() => strategies.filter((s) => s.timeframes.some(isLiveTradeable)), [strategies]);
   const tradableConnections = useMemo(() => connections.filter((c) => c.trading_enabled), [connections]);
 
   const canCreate = liveTradeable.length > 0 && tradableConnections.length > 0;
 
   const [strategyId, setStrategyId] = useState<number | null>(liveTradeable[0]?.id ?? null);
   const selectedStrategy = strategies.find((s) => s.id === strategyId) ?? null;
+  const eligibleTimeframes = (selectedStrategy?.timeframes ?? []).filter(isLiveTradeable);
   const [connectionId, setConnectionId] = useState<number | null>(tradableConnections[0]?.id ?? null);
   const [symbol, setSymbol] = useState<string>(liveTradeable[0]?.symbols[0] ?? "");
+  const [timeframe, setTimeframe] = useState<string>(liveTradeable[0]?.timeframes.filter(isLiveTradeable)[0] ?? "");
 
   const [showForm, setShowForm] = useState(false);
   const [step, setStep] = useState<"form" | "review">("form");
@@ -102,6 +124,7 @@ export function TradingAutomaticoClient({
     setStrategyId(id);
     const strategy = strategies.find((s) => s.id === id);
     setSymbol(strategy?.symbols[0] ?? "");
+    setTimeframe(strategy?.timeframes.filter(isLiveTradeable)[0] ?? "");
   }
 
   async function reloadSessions() {
@@ -115,7 +138,7 @@ export function TradingAutomaticoClient({
   }
 
   async function createSession() {
-    if (strategyId === null || connectionId === null || !symbol) return;
+    if (strategyId === null || connectionId === null || !symbol || !timeframe) return;
     setCreating(true);
     setCreateError(null);
 
@@ -127,7 +150,7 @@ export function TradingAutomaticoClient({
           strategy_id: strategyId,
           broker_connection_id: connectionId,
           symbol,
-          timeframe: LIVE_TRADING_TIMEFRAME,
+          timeframe,
         }),
       });
       const data = await response.json();
@@ -166,6 +189,10 @@ export function TradingAutomaticoClient({
               sistema solo actúa sobre la diferencia entre lo que de verdad tenés abierto y lo que la
               estrategia dice que debería estar abierto ahora. Recomendamos paper-tradear una estrategia un
               tiempo antes de pasarla a real.
+              <br />
+              <br />
+              Solo se pueden activar temporalidades de 15m o más lentas: con temporalidades más rápidas que
+              el cron, una operación podría abrir y cerrar completa entre dos ticks y perderse en silencio.
               <br />
               <br />
               &quot;Detener&quot; para el tick, pero <strong>no cierra sola una posición real abierta</strong>{" "}
@@ -224,7 +251,8 @@ export function TradingAutomaticoClient({
       )}
       {!strategiesError && strategies.length > 0 && liveTradeable.length === 0 && (
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
-          Ninguna de tus estrategias declara la temporalidad 1h (la única soportada por ahora).{" "}
+          Ninguna de tus estrategias declara una temporalidad de 15m o más lenta (el piso que soporta el cron
+          de trading en vivo).{" "}
           <Link href="/estrategias" className="font-semibold text-ink underline">
             Agregala en Estrategias
           </Link>
@@ -286,6 +314,20 @@ export function TradingAutomaticoClient({
                   </select>
                 </label>
                 <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium text-muted">Temporalidad</span>
+                  <select
+                    value={timeframe}
+                    onChange={(e) => setTimeframe(e.target.value)}
+                    className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                  >
+                    {eligibleTimeframes.map((tf) => (
+                      <option key={tf} value={tf}>
+                        {tf}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-muted">Cuenta (con trading habilitado)</span>
                   <select
                     value={connectionId ?? ""}
@@ -302,7 +344,7 @@ export function TradingAutomaticoClient({
               </div>
               <button
                 onClick={() => setStep("review")}
-                disabled={strategyId === null || connectionId === null || !symbol}
+                disabled={strategyId === null || connectionId === null || !symbol || !timeframe}
                 className="mt-6 rounded-xl border border-border px-4 py-2 text-sm font-semibold text-ink disabled:opacity-50"
               >
                 Revisar
@@ -314,7 +356,7 @@ export function TradingAutomaticoClient({
             <div className="mt-6 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-ink">
               <p>
                 Vas a activar <span className="font-semibold">{selectedStrategy.name}</span> para operar sola en{" "}
-                <span className="font-semibold">{symbol}</span> ({LIVE_TRADING_TIMEFRAME}) contra{" "}
+                <span className="font-semibold">{symbol}</span> ({timeframe}) contra{" "}
                 <span className="font-semibold">
                   {selectedConnection.label} ({exchangeLabel(selectedConnection.exchange)})
                 </span>
@@ -363,6 +405,7 @@ export function TradingAutomaticoClient({
                   <th className="pb-2 pr-4 font-medium">Estrategia</th>
                   <th className="pb-2 pr-4 font-medium">Cuenta</th>
                   <th className="pb-2 pr-4 font-medium">Símbolo</th>
+                  <th className="pb-2 pr-4 font-medium">Temporalidad</th>
                   <th className="pb-2 pr-4 font-medium">Estado</th>
                   <th className="pb-2 pr-4 font-medium">Posición actual</th>
                   <th className="pb-2 pr-4 font-medium">Última actualización</th>
@@ -381,6 +424,7 @@ export function TradingAutomaticoClient({
                       {s.broker_connection_label} <span className="text-muted">({exchangeLabel(s.exchange)})</span>
                     </td>
                     <td className="py-3 pr-4 text-ink">{s.symbol}</td>
+                    <td className="py-3 pr-4 text-ink">{s.timeframe}</td>
                     <td className="py-3 pr-4">
                       <StatusBadge status={s.status} />
                     </td>
