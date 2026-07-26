@@ -2,11 +2,25 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
 import { TopMetricsPanel } from "@/components/TopMetricsPanel";
 import type { LiveBacktestMetrics } from "@/lib/api";
-import { conditionLabel, type Condition, type ConditionCategory, type DatasetOption } from "../ConstructorClient";
+import {
+  CATEGORY_OPTIONS,
+  CheckboxGroup,
+  ConditionBuilder,
+  Field,
+  MultiSymbolCombobox,
+  TIMEFRAME_OPTIONS,
+  buildConfig,
+  conditionLabel,
+  type Condition,
+  type ConditionCategory,
+  type DatasetOption,
+  type FormState,
+} from "../EstrategiasClient";
 
 interface StrategyConfigJSON {
   symbol: string;
@@ -94,16 +108,28 @@ export function StrategyDetailClient({
   initialError,
   datasets,
   conditionCatalog,
+  symbols,
 }: {
   strategyId: string;
   initialStrategy: StrategyDetail | null;
   initialError: string | null;
   datasets: DatasetOption[];
   conditionCatalog: ConditionCategory[];
+  symbols: string[];
 }) {
+  const router = useRouter();
   const [strategy, setStrategy] = useState<StrategyDetail | null>(initialStrategy);
   const [loadError] = useState<string | null>(initialError);
   const [togglingStatus, setTogglingStatus] = useState(false);
+
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<FormState | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<number | null>(null);
 
   // strategy/datasets llegan resueltos desde el server component: alcanza con derivar
   // el combo inicial una sola vez al montar, no hace falta un efecto para eso.
@@ -164,6 +190,119 @@ export function StrategyDetailClient({
     }
   }
 
+  function startEditing() {
+    if (!strategy) return;
+    setEditForm({
+      name: strategy.name,
+      category: strategy.category,
+      symbols: strategy.symbols,
+      timeframes: strategy.timeframes,
+      entryRules: strategy.entry_rules,
+      exitRules: strategy.exit_rules,
+      notes: strategy.notes,
+      stopLossPct: (strategy.config.stop_loss_pct ?? 0) * 100,
+      takeProfitPct: (strategy.config.take_profit_pct ?? 0) * 100,
+      trailingStopPct: (strategy.config.trailing_stop_pct ?? 0) * 100,
+      riskPerTrade: (strategy.config.risk_per_trade ?? 0) * 100,
+    });
+    setEditError(null);
+    setEditing(true);
+  }
+
+  function updateEditForm<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setEditForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  async function saveEdit() {
+    if (!strategy || !editForm) return;
+    if (editForm.name.trim() === "") {
+      setEditError("El nombre no puede estar vacío.");
+      return;
+    }
+    if (strategy.strategy_type === "condition_based" && editForm.entryRules.length === 0) {
+      setEditError("Agregá al menos una condición de entrada.");
+      return;
+    }
+    const firstValidEditCombo = datasets.find(
+      (d) => editForm.symbols.includes(d.symbol) && editForm.timeframes.includes(d.timeframe),
+    );
+    if (!firstValidEditCombo) {
+      setEditError("No hay dataset disponible para ninguna combinación de los mercados/temporalidades elegidos.");
+      return;
+    }
+
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const response = await fetch(`/api/strategies/${strategy.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editForm.name,
+          category: editForm.category,
+          symbols: editForm.symbols,
+          timeframes: editForm.timeframes,
+          entry_rules: editForm.entryRules,
+          exit_rules: editForm.exitRules,
+          notes: editForm.notes,
+          config: buildConfig(editForm, firstValidEditCombo.symbol, firstValidEditCombo.timeframe),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setEditError(typeof data.detail === "string" ? data.detail : "No se pudieron guardar los cambios.");
+        return;
+      }
+      setEditing(false);
+      await reloadStrategy();
+    } catch {
+      setEditError("No se pudo conectar con la API. Probá de nuevo.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteStrategy() {
+    if (!strategy) return;
+    if (!window.confirm(`¿Eliminar la estrategia "${strategy.name}"? Esta acción no se puede deshacer.`)) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(`/api/strategies/${strategy.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}) as Record<string, unknown>);
+        setDeleteError(typeof data.detail === "string" ? data.detail : "No se pudo eliminar la estrategia.");
+        setDeleting(false);
+        return;
+      }
+      router.push("/estrategias");
+      router.refresh();
+    } catch {
+      setDeleteError("No se pudo conectar con la API. Probá de nuevo.");
+      setDeleting(false);
+    }
+  }
+
+  async function deleteRun(runId: number) {
+    if (!strategy) return;
+    if (!window.confirm("¿Eliminar esta corrida del historial? Esta acción no se puede deshacer.")) return;
+
+    setDeletingRunId(runId);
+    try {
+      const response = await fetch(`/api/strategies/${strategy.id}/backtests/${runId}`, { method: "DELETE" });
+      if (response.ok) {
+        if (selectedRunId === runId) {
+          setSelectedRunId(null);
+          setSelectedRunDetail(null);
+        }
+        await reloadStrategy();
+      }
+    } finally {
+      setDeletingRunId(null);
+    }
+  }
+
   async function runNewBacktest() {
     if (!strategy || !runSymbol || !runTimeframe) return;
     setRunningBacktest(true);
@@ -197,8 +336,8 @@ export function StrategyDetailClient({
   if (loadError || !strategy) {
     return (
       <div className="flex flex-col gap-8">
-        <Link href="/constructor" className="text-sm font-semibold text-ink underline">
-          ← Volver al Constructor de Estrategias
+        <Link href="/estrategias" className="text-sm font-semibold text-ink underline">
+          ← Volver a Estrategias
         </Link>
         <div className="rounded-3xl bg-panel p-8 text-sm text-muted">
           <span className="font-semibold text-ink">No se pudo cargar la estrategia: </span>
@@ -223,8 +362,8 @@ export function StrategyDetailClient({
 
   return (
     <div className="flex flex-col gap-8">
-      <Link href="/constructor" className="text-sm font-semibold text-ink underline">
-        ← Volver al Constructor de Estrategias
+      <Link href="/estrategias" className="text-sm font-semibold text-ink underline">
+        ← Volver a Estrategias
       </Link>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -256,8 +395,30 @@ export function StrategyDetailClient({
           >
             {togglingStatus ? "Actualizando…" : isActive ? "Pausar" : "Activar"}
           </button>
+          {strategy.strategy_type === "condition_based" && (
+            <button
+              onClick={() => (editing ? setEditing(false) : startEditing())}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted"
+            >
+              {editing ? "Cancelar edición" : "Editar"}
+            </button>
+          )}
+          <button
+            onClick={deleteStrategy}
+            disabled={deleting}
+            className="rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 disabled:opacity-50"
+          >
+            {deleting ? "Eliminando…" : "Eliminar"}
+          </button>
         </div>
       </div>
+
+      {deleteError && (
+        <div className="rounded-3xl bg-panel p-4 text-sm text-muted">
+          <span className="font-semibold text-ink">No se pudo eliminar: </span>
+          {deleteError}
+        </div>
+      )}
 
       {selectedRunDetail && (
         <TopMetricsPanel
@@ -272,70 +433,173 @@ export function StrategyDetailClient({
       )}
 
       <div className="rounded-3xl bg-panel p-8">
-        <h2 className="text-lg font-bold text-ink">Definición de la estrategia</h2>
+        <h2 className="text-lg font-bold text-ink">{editing ? "Editar estrategia" : "Definición de la estrategia"}</h2>
 
-        {strategy.strategy_type === "condition_based" ? (
-          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
-            <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
-            <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
-            <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
-          </div>
+        {editing && editForm ? (
+          <>
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted">Nombre</span>
+                <input
+                  type="text"
+                  value={editForm.name}
+                  onChange={(e) => updateEditForm("name", e.target.value)}
+                  className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-muted">Categoría</span>
+                <select
+                  value={editForm.category}
+                  onChange={(e) => updateEditForm("category", e.target.value)}
+                  className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+                >
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <MultiSymbolCombobox
+                label="Mercados"
+                symbols={symbols}
+                selected={editForm.symbols}
+                onChange={(v) => updateEditForm("symbols", v)}
+              />
+              <CheckboxGroup
+                label="Temporalidades compatibles"
+                options={TIMEFRAME_OPTIONS}
+                selected={editForm.timeframes}
+                onChange={(v) => updateEditForm("timeframes", v)}
+              />
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <ConditionBuilder
+                label="Condiciones de entrada (todas deben cumplirse)"
+                conditions={editForm.entryRules}
+                onChange={(v) => updateEditForm("entryRules", v)}
+                catalog={conditionCatalog}
+                emptyHint="Sin condiciones — agregá al menos una para poder guardar"
+              />
+              <ConditionBuilder
+                label="Condiciones de salida (todas deben cumplirse)"
+                conditions={editForm.exitRules}
+                onChange={(v) => updateEditForm("exitRules", v)}
+                catalog={conditionCatalog}
+                emptyHint="Sin condiciones — sale solo por Stop Loss/Take Profit/Trailing Stop"
+              />
+            </div>
+
+            <label className="mt-4 flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Notas</span>
+              <textarea
+                value={editForm.notes}
+                onChange={(e) => updateEditForm("notes", e.target.value)}
+                rows={2}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              />
+            </label>
+
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              <Field label="Stop Loss (%)" value={editForm.stopLossPct} onChange={(v) => updateEditForm("stopLossPct", v)} />
+              <Field label="Take Profit (%)" value={editForm.takeProfitPct} onChange={(v) => updateEditForm("takeProfitPct", v)} />
+              <Field label="Trailing Stop (%)" value={editForm.trailingStopPct} onChange={(v) => updateEditForm("trailingStopPct", v)} />
+              <Field label="Riesgo por operación (%)" value={editForm.riskPerTrade} onChange={(v) => updateEditForm("riskPerTrade", v)} />
+            </div>
+
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                onClick={saveEdit}
+                disabled={savingEdit}
+                className="rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingEdit ? "Guardando…" : "Guardar cambios"}
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                disabled={savingEdit}
+                className="rounded-xl border border-border px-5 py-2.5 text-sm font-semibold text-muted disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            {editError && (
+              <p className="mt-4 text-sm text-muted">
+                <span className="font-semibold text-ink">No se pudo guardar: </span>
+                {editError}
+              </p>
+            )}
+          </>
         ) : (
-          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <ConfigField label="EMA rápida" value={emaFast != null ? String(emaFast) : "—"} />
-            <ConfigField label="EMA lenta" value={emaSlow != null ? String(emaSlow) : "—"} />
-            <ConfigField label="ATR (períodos)" value={atr != null ? String(atr) : "—"} />
-            <ConfigField label="ATR mínimo" value={pct(atrMinPct)} />
-            <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
-            <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
-            <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
-            <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
-          </div>
-        )}
-
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <span className="text-xs font-medium text-muted">Condiciones de entrada</span>
-            {strategy.entry_rules.length > 0 ? (
-              <div className="mt-1 flex flex-wrap gap-2">
-                {strategy.entry_rules.map((c, i) => (
-                  <span
-                    key={i}
-                    className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
-                  >
-                    {conditionLabel(conditionCatalog, c)}
-                  </span>
-                ))}
+          <>
+            {strategy.strategy_type === "condition_based" ? (
+              <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
+                <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
+                <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
+                <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
               </div>
             ) : (
-              <p className="mt-1 text-sm text-ink">{strategy.entry_conditions || "—"}</p>
-            )}
-          </div>
-          <div>
-            <span className="text-xs font-medium text-muted">Condiciones de salida</span>
-            {strategy.exit_rules.length > 0 ? (
-              <div className="mt-1 flex flex-wrap gap-2">
-                {strategy.exit_rules.map((c, i) => (
-                  <span
-                    key={i}
-                    className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
-                  >
-                    {conditionLabel(conditionCatalog, c)}
-                  </span>
-                ))}
+              <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+                <ConfigField label="EMA rápida" value={emaFast != null ? String(emaFast) : "—"} />
+                <ConfigField label="EMA lenta" value={emaSlow != null ? String(emaSlow) : "—"} />
+                <ConfigField label="ATR (períodos)" value={atr != null ? String(atr) : "—"} />
+                <ConfigField label="ATR mínimo" value={pct(atrMinPct)} />
+                <ConfigField label="Stop Loss" value={pct(config.stop_loss_pct)} />
+                <ConfigField label="Take Profit" value={pct(config.take_profit_pct)} />
+                <ConfigField label="Trailing Stop" value={pct(config.trailing_stop_pct)} />
+                <ConfigField label="Riesgo por operación" value={pct(config.risk_per_trade)} />
               </div>
-            ) : (
-              <p className="mt-1 text-sm text-ink">{strategy.exit_conditions || "—"}</p>
             )}
-          </div>
-        </div>
 
-        {strategy.notes && (
-          <div className="mt-4">
-            <span className="text-xs font-medium text-muted">Notas</span>
-            <p className="mt-1 text-sm text-ink">{strategy.notes}</p>
-          </div>
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <span className="text-xs font-medium text-muted">Condiciones de entrada</span>
+                {strategy.entry_rules.length > 0 ? (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {strategy.entry_rules.map((c, i) => (
+                      <span
+                        key={i}
+                        className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
+                      >
+                        {conditionLabel(conditionCatalog, c)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-ink">{strategy.entry_conditions || "—"}</p>
+                )}
+              </div>
+              <div>
+                <span className="text-xs font-medium text-muted">Condiciones de salida</span>
+                {strategy.exit_rules.length > 0 ? (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {strategy.exit_rules.map((c, i) => (
+                      <span
+                        key={i}
+                        className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink"
+                      >
+                        {conditionLabel(conditionCatalog, c)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-ink">{strategy.exit_conditions || "—"}</p>
+                )}
+              </div>
+            </div>
+
+            {strategy.notes && (
+              <div className="mt-4">
+                <span className="text-xs font-medium text-muted">Notas</span>
+                <p className="mt-1 text-sm text-ink">{strategy.notes}</p>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -445,7 +709,7 @@ export function StrategyDetailClient({
                   <th className="pb-2 pr-4 font-medium">Win rate</th>
                   <th className="pb-2 pr-4 font-medium">Profit factor</th>
                   <th className="pb-2 pr-4 font-medium">PnL total</th>
-                  <th className="pb-2 font-medium" />
+                  <th className="pb-2 font-medium" colSpan={2} />
                 </tr>
               </thead>
               <tbody>
@@ -461,12 +725,21 @@ export function StrategyDetailClient({
                       {run.total_pnl >= 0 ? "+" : ""}
                       {run.total_pnl.toLocaleString("es-AR", { maximumFractionDigits: 2 })}
                     </td>
-                    <td className="py-3">
+                    <td className="py-3 pr-4">
                       <button
                         onClick={() => setSelectedRunId(run.id)}
                         className={`text-sm font-semibold underline ${selectedRunId === run.id ? "text-ink" : "text-muted"}`}
                       >
                         {selectedRunId === run.id ? "Viendo" : "Ver detalle"}
+                      </button>
+                    </td>
+                    <td className="py-3">
+                      <button
+                        onClick={() => deleteRun(run.id)}
+                        disabled={deletingRunId === run.id}
+                        className="text-sm font-semibold text-red-600 underline disabled:opacity-50"
+                      >
+                        {deletingRunId === run.id ? "Eliminando…" : "Eliminar"}
                       </button>
                     </td>
                   </tr>

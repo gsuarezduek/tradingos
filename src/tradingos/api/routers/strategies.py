@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from tradingos.backtest.engine import SUPPORTED_TIMEFRAMES
 from tradingos.backtest.service import DATA_DIR, list_available_datasets, resolve_dataset, resolve_strategy, run_backtest_result
 from tradingos.core.conditions import CONDITION_CATALOG, Condition, describe_conditions, validate_condition
 from tradingos.core.strategy import StrategyConfig, get_strategy, list_strategies
-from tradingos.db.models import SavedStrategy, StrategyBacktestRun, User
+from tradingos.db.models import LiveTradingSession, PaperTradingSession, SavedStrategy, StrategyBacktestRun, User
 from tradingos.db.session import get_db
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
@@ -400,6 +400,33 @@ def update_strategy(
     return _to_strategy_response(strategy)
 
 
+@router.delete("/{strategy_id}", status_code=204)
+def delete_strategy(
+    strategy_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Response:
+    strategy = _get_owned_strategy(strategy_id, user, db)
+
+    # Trading Automático (plata real) no tiene forma de desvincularse de su estrategia
+    # (LiveTradingSession.strategy_id no es nullable): si borráramos la estrategia se
+    # rompería la integridad de ese historial. Paper trading sí es nullable — se
+    # desvincula para conservar su historial sin la estrategia.
+    has_live_sessions = (
+        db.query(LiveTradingSession).filter(LiveTradingSession.strategy_id == strategy.id).first() is not None
+    )
+    if has_live_sessions:
+        raise HTTPException(
+            status_code=400,
+            detail="no se puede eliminar: tiene sesiones de Trading Automático asociadas",
+        )
+
+    db.query(PaperTradingSession).filter(PaperTradingSession.strategy_id == strategy.id).update(
+        {"strategy_id": None}
+    )
+    db.delete(strategy)
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.post("/{strategy_id}/backtests", response_model=BacktestRunDetail)
 def run_backtest(
     strategy_id: int,
@@ -432,3 +459,23 @@ def backtest_run_detail(
     if run is None:
         raise HTTPException(status_code=404, detail="corrida no encontrada")
     return BacktestRunDetail(**_to_run_summary(run).model_dump(), config_snapshot=run.config_snapshot, equity_curve=run.equity_curve, trades=run.trades)
+
+
+@router.delete("/{strategy_id}/backtests/{run_id}", status_code=204)
+def delete_backtest_run(
+    strategy_id: int,
+    run_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    strategy = _get_owned_strategy(strategy_id, user, db)
+    run = (
+        db.query(StrategyBacktestRun)
+        .filter(StrategyBacktestRun.id == run_id, StrategyBacktestRun.strategy_id == strategy.id)
+        .first()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="corrida no encontrada")
+    db.delete(run)
+    db.commit()
+    return Response(status_code=204)

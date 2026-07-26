@@ -117,7 +117,7 @@ export function SessionDetailClient({
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
             {session.symbol} ·{" "}
-            <Link href={`/constructor/${session.strategy_id}`} className="underline">
+            <Link href={`/estrategias/${session.strategy_id}`} className="underline">
               {session.strategy_name}
             </Link>
             <InfoGuide>

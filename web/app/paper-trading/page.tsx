@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import { PaperTradingClient, type SessionSummary } from "./PaperTradingClient";
 
 async function fetchSessions(token: string): Promise<{ sessions: SessionSummary[]; error: string | null }> {
@@ -23,8 +23,8 @@ async function fetchSessions(token: string): Promise<{ sessions: SessionSummary[
   }
 }
 
-// Estrategias guardadas del Constructor: paper trading siempre parte de una de estas
-// (mismo endpoint que usa /constructor), no de un formulario armado desde cero.
+// Estrategias guardadas en Estrategias: paper trading siempre parte de una de estas
+// (mismo endpoint que usa /estrategias), no de un formulario armado desde cero.
 async function fetchStrategies(token: string): Promise<{ strategies: SavedStrategySummary[]; error: string | null }> {
   try {
     const response = await fetch(`${API_BASE_URL}/strategies`, {

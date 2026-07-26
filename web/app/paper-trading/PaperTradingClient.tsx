@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 
 // Único timeframe que soporta el tick de paper trading hoy (ver LOOKBACK_BARS en
 // paper_trading/tick.py, que asume velas de 1h). Una estrategia puede declarar otras
@@ -148,14 +148,14 @@ export function PaperTradingClient({
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
             Paper Trading
             <InfoGuide>
-              Paper Trading toma una de tus estrategias guardadas en el Constructor y simula su ejecución
+              Paper Trading toma una de tus estrategias guardadas en Estrategias y simula su ejecución
               contra el mercado real en curso, sin usar plata real. Cada sesión corre el motor de backtest
               cada 15 minutos (vía un servicio cron) sobre las últimas velas cerradas del símbolo elegido, y
               actualiza el equity, la posición abierta y las operaciones cerradas.
               <br />
               <br />
-              Solo se puede paper-tradear en 1h por ahora, y solo mercados que la estrategia declaró en el
-              Constructor. Si no ves una estrategia acá, o su símbolo, revisá su configuración ahí primero.
+              Solo se puede paper-tradear en 1h por ahora, y solo mercados que la estrategia declaró en
+              Estrategias. Si no ves una estrategia acá, o su símbolo, revisá su configuración ahí primero.
               <br />
               <br />
               Podés tener varias sesiones corriendo en simultáneo. Esta pantalla lista todas tus sesiones
@@ -199,8 +199,8 @@ export function PaperTradingClient({
       {!strategiesError && strategies.length === 0 && (
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
           Todavía no guardaste ninguna estrategia.{" "}
-          <Link href="/constructor" className="font-semibold text-ink underline">
-            Creá una en el Constructor
+          <Link href="/estrategias" className="font-semibold text-ink underline">
+            Creá una en Estrategias
           </Link>{" "}
           para poder paper-tradearla.
         </div>
@@ -210,8 +210,8 @@ export function PaperTradingClient({
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
           Ninguna de tus estrategias declara la temporalidad 1h (la única que soporta paper trading por
           ahora).{" "}
-          <Link href="/constructor" className="font-semibold text-ink underline">
-            Agregala en el Constructor
+          <Link href="/estrategias" className="font-semibold text-ink underline">
+            Agregala en Estrategias
           </Link>
           .
         </div>
@@ -307,7 +307,7 @@ export function PaperTradingClient({
                     <tr key={s.id} className="border-b border-border last:border-0">
                       <td className="py-3 pr-4 font-semibold text-ink">
                         {s.strategy_id ? (
-                          <Link href={`/constructor/${s.strategy_id}`} className="underline">
+                          <Link href={`/estrategias/${s.strategy_id}`} className="underline">
                             {s.strategy_name ?? s.strategy}
                           </Link>
                         ) : (

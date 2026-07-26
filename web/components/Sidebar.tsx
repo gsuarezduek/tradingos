@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 const modules: { label: string; icon: LucideIcon; href?: string }[] = [
-  { label: "Constructor de Estrategias", icon: Blocks, href: "/constructor" },
+  { label: "Estrategias", icon: Blocks, href: "/estrategias" },
   { label: "Laboratorio de Estrategias", icon: FlaskConical },
   { label: "Optimizador", icon: SlidersHorizontal, href: "/optimizador" },
   { label: "Clasificador de Mercado", icon: Compass },

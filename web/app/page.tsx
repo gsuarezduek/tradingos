@@ -3,7 +3,7 @@ import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
 import { EXCHANGES } from "@/lib/exchanges";
 import type { Connection } from "@/app/conexiones/ConexionesClient";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import { DashboardClient } from "./DashboardClient";
 
 async function fetchConnections(token: string): Promise<{ connections: Connection[]; error: string | null }> {

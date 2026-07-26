@@ -5,7 +5,7 @@ import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
 import { EXCHANGES } from "@/lib/exchanges";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
 
 // Misma limitación que paper trading: el tick asume velas de 1h.
@@ -156,7 +156,7 @@ export function TradingAutomaticoClient({
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
             Trading Automático
             <InfoGuide>
-              Activa una de tus estrategias del Constructor para que opere sola, con plata real, contra una
+              Activa una de tus estrategias guardadas en Estrategias para que opere sola, con plata real, contra una
               cuenta con trading habilitado. Cada 15 minutos (mismo cron que Paper Trading) el sistema
               recalcula qué debería estar pasando ahora mismo y, si corresponde, manda una orden real market
               (misma ruta que Operar Manual).
@@ -172,7 +172,7 @@ export function TradingAutomaticoClient({
               — esa decisión es tuya, se cierra manualmente desde Operar Manual si hace falta.
             </InfoGuide>
           </h1>
-          <p className="text-sm text-muted">Estrategias del Constructor operando solas con plata real</p>
+          <p className="text-sm text-muted">Estrategias guardadas operando solas con plata real</p>
         </div>
         <div className="flex items-center gap-3">
           <DataBadge
@@ -216,8 +216,8 @@ export function TradingAutomaticoClient({
       {!strategiesError && strategies.length === 0 && (
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
           Todavía no guardaste ninguna estrategia.{" "}
-          <Link href="/constructor" className="font-semibold text-ink underline">
-            Creá una en el Constructor
+          <Link href="/estrategias" className="font-semibold text-ink underline">
+            Creá una en Estrategias
           </Link>
           .
         </div>
@@ -225,8 +225,8 @@ export function TradingAutomaticoClient({
       {!strategiesError && strategies.length > 0 && liveTradeable.length === 0 && (
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
           Ninguna de tus estrategias declara la temporalidad 1h (la única soportada por ahora).{" "}
-          <Link href="/constructor" className="font-semibold text-ink underline">
-            Agregala en el Constructor
+          <Link href="/estrategias" className="font-semibold text-ink underline">
+            Agregala en Estrategias
           </Link>
           .
         </div>
@@ -373,7 +373,7 @@ export function TradingAutomaticoClient({
                 {sessions.map((s) => (
                   <tr key={s.id} className="border-b border-border last:border-0">
                     <td className="py-3 pr-4 font-semibold text-ink">
-                      <Link href={`/constructor/${s.strategy_id}`} className="underline">
+                      <Link href={`/estrategias/${s.strategy_id}`} className="underline">
                         {s.strategy_name}
                       </Link>
                     </td>

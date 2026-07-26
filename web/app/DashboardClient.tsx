@@ -7,7 +7,7 @@ import { InfoGuide } from "@/components/InfoGuide";
 import { ActiveStrategiesGrid } from "@/components/ActiveStrategiesGrid";
 import { EXCHANGES } from "@/lib/exchanges";
 import type { Connection } from "@/app/conexiones/ConexionesClient";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 
 function exchangeLabel(value: string): string {
   return EXCHANGES.find((e) => e.value === value)?.label ?? value;
@@ -68,7 +68,7 @@ export function DashboardClient({
             <InfoGuide>
               Capital total: suma el equivalente en USDT de los balances spot de todas tus cuentas conectadas
               (mismo cálculo que en Conexión con Exchanges). Estrategias activas: las que guardaste en el
-              Constructor de Estrategias con estado &quot;Activa&quot;.
+              módulo de Estrategias con estado &quot;Activa&quot;.
             </InfoGuide>
           </h1>
           <p className="text-sm text-muted">Vista general de tu operativa</p>

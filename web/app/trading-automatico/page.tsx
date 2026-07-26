@@ -1,7 +1,7 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
 import { EXCHANGES } from "@/lib/exchanges";
-import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
 import { TradingAutomaticoClient, type LiveSessionSummary } from "./TradingAutomaticoClient";
 
@@ -25,7 +25,7 @@ async function fetchSessions(token: string): Promise<{ sessions: LiveSessionSumm
   }
 }
 
-// Estrategias guardadas del Constructor: igual que paper trading, trading en vivo
+// Estrategias guardadas en Estrategias: igual que paper trading, trading en vivo
 // siempre parte de una de estas, nunca de una config armada en esta pantalla.
 async function fetchStrategies(token: string): Promise<{ strategies: SavedStrategySummary[]; error: string | null }> {
   try {

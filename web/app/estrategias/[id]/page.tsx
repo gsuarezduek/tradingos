@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
-import type { ConditionCategory, DatasetOption } from "../ConstructorClient";
+import type { ConditionCategory, DatasetOption } from "../EstrategiasClient";
 import { StrategyDetailClient, type StrategyDetail } from "./StrategyDetailClient";
 
 async function fetchStrategy(id: string): Promise<{ strategy: StrategyDetail | null; error: string | null }> {
@@ -52,12 +52,32 @@ async function fetchConditionCatalog(): Promise<ConditionCategory[]> {
   }
 }
 
+// Lista de símbolos de Binance para el autocomplete de mercados al editar; mismo
+// endpoint que usa la página principal de Estrategias y Paper Trading.
+async function fetchSymbols(): Promise<string[]> {
+  const token = await getSessionToken();
+  if (!token) return [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/paper-trading/symbols`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15000),
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
 export default async function StrategyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [{ strategy, error }, datasets, conditionCatalog] = await Promise.all([
+  const [{ strategy, error }, datasets, conditionCatalog, symbols] = await Promise.all([
     fetchStrategy(id),
     fetchDatasets(),
     fetchConditionCatalog(),
+    fetchSymbols(),
   ]);
   return (
     <StrategyDetailClient
@@ -66,6 +86,7 @@ export default async function StrategyDetailPage({ params }: { params: Promise<{
       initialError={error}
       datasets={datasets}
       conditionCatalog={conditionCatalog}
+      symbols={symbols}
     />
   );
 }

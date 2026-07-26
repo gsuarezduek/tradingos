@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Calendar, TrendingDown, TrendingUp } from "lucide-react";
-import { CATEGORY_LABELS, type SavedStrategySummary } from "@/app/constructor/ConstructorClient";
+import { CATEGORY_LABELS, type SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 
 function StrategyCard({ strategy }: { strategy: SavedStrategySummary }) {
   const run = strategy.latest_run;
   return (
     <Link
-      href={`/constructor/${strategy.id}`}
+      href={`/estrategias/${strategy.id}`}
       className="block rounded-2xl border border-border bg-surface p-4 transition-colors hover:border-ink"
     >
       <div className="flex items-start justify-between gap-2">
@@ -47,8 +47,8 @@ export function ActiveStrategiesGrid({ strategies }: { strategies: SavedStrategy
     return (
       <div className="mt-4 rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted">
         No tenés estrategias activas.{" "}
-        <Link href="/constructor" className="font-semibold text-ink underline">
-          Creá una en el Constructor
+        <Link href="/estrategias" className="font-semibold text-ink underline">
+          Creá una en Estrategias
         </Link>
         .
       </div>

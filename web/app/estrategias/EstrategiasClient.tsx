@@ -14,7 +14,7 @@ const MAX_SUGGESTIONS = 30;
 // Temporalidades ofrecidas en el formulario. El motor sabe anualizar métricas para
 // todas estas (ver SUPPORTED_TIMEFRAMES en backtest/engine.py) — que aparezcan acá no
 // implica que ya exista un dataset real para correr un backtest en esa temporalidad.
-const TIMEFRAME_OPTIONS = ["3m", "5m", "30m", "1h", "4h", "1d", "1w"];
+export const TIMEFRAME_OPTIONS = ["3m", "5m", "30m", "1h", "4h", "1d", "1w"];
 
 export interface Condition {
   category: string;
@@ -90,7 +90,7 @@ export interface SavedStrategySummary {
   latest_run: BacktestRunSummary | null;
 }
 
-const CATEGORY_OPTIONS: { value: string; label: string }[] = [
+export const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: "scalping", label: "Scalping" },
   { value: "day_trading", label: "Day Trading" },
   { value: "swing", label: "Swing" },
@@ -98,7 +98,12 @@ const CATEGORY_OPTIONS: { value: string; label: string }[] = [
 
 export const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(CATEGORY_OPTIONS.map((c) => [c.value, c.label]));
 
-interface FormState {
+// El equity inicial ya no se pide acá: se define al correr cada backtest (ver
+// StrategyDetailClient), así que el primer backtest automático al guardar parte de
+// este default fijo.
+const DEFAULT_INITIAL_EQUITY = 10_000;
+
+export interface FormState {
   name: string;
   category: string;
   symbols: string[];
@@ -110,10 +115,9 @@ interface FormState {
   takeProfitPct: number;
   trailingStopPct: number;
   riskPerTrade: number;
-  initialEquity: number;
 }
 
-function defaultsFor(datasets: DatasetOption[]): FormState {
+export function defaultsFor(datasets: DatasetOption[]): FormState {
   return {
     name: "",
     category: "swing",
@@ -126,11 +130,10 @@ function defaultsFor(datasets: DatasetOption[]): FormState {
     takeProfitPct: 4,
     trailingStopPct: 1.5,
     riskPerTrade: 1,
-    initialEquity: 10000,
   };
 }
 
-function Field({
+export function Field({
   label,
   value,
   onChange,
@@ -158,7 +161,7 @@ function Field({
   );
 }
 
-function CheckboxGroup({
+export function CheckboxGroup({
   label,
   options,
   selected,
@@ -197,7 +200,7 @@ function CheckboxGroup({
   );
 }
 
-function MultiSymbolCombobox({
+export function MultiSymbolCombobox({
   label,
   selected,
   symbols,
@@ -300,7 +303,7 @@ export function conditionLabel(catalog: ConditionCategory[], condition: Conditio
   return `${conditionType?.label ?? condition.condition_type}${paramsText ? ` (${paramsText})` : ""}`;
 }
 
-function ConditionBuilder({
+export function ConditionBuilder({
   label,
   conditions,
   onChange,
@@ -458,7 +461,7 @@ function ConditionBuilder({
   );
 }
 
-function buildConfig(form: FormState, symbol: string, timeframe: string) {
+export function buildConfig(form: FormState, symbol: string, timeframe: string) {
   return {
     symbol,
     timeframe,
@@ -483,7 +486,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export function ConstructorClient({
+export function EstrategiasClient({
   initialStrategies,
   initialError,
   datasets,
@@ -545,7 +548,7 @@ export function ConstructorClient({
           exit_rules: form.exitRules,
           notes: form.notes,
           config: buildConfig(form, firstValidCombo.symbol, firstValidCombo.timeframe),
-          initial_equity: form.initialEquity,
+          initial_equity: DEFAULT_INITIAL_EQUITY,
         }),
       });
       const data = await response.json();
@@ -572,7 +575,7 @@ export function ConstructorClient({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-            Constructor de Estrategias
+            Estrategias
             <InfoGuide>
               Guardá una estrategia con su nombre, categoría, mercados y temporalidades donde aplica, y armá
               sus condiciones de entrada y salida con &quot;+ Agregar condición&quot;: elegí un indicador y un
@@ -620,7 +623,7 @@ export function ConstructorClient({
       {showForm && (
         <div className="rounded-3xl bg-panel p-8">
           <h2 className="text-lg font-bold text-ink">Guardar nueva estrategia</h2>
-          <p className="mt-1 text-sm text-muted">Constructor de condiciones</p>
+          <p className="mt-1 text-sm text-muted">Condiciones de entrada y salida</p>
 
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <label className="flex flex-col gap-1.5">
@@ -647,8 +650,6 @@ export function ConstructorClient({
                 ))}
               </select>
             </label>
-            <Field label="Equity inicial ($)" value={form.initialEquity} step="100" min="100" onChange={(v) => update("initialEquity", v)} />
-
             <MultiSymbolCombobox
               label="Mercados"
               symbols={symbols}
@@ -757,7 +758,7 @@ export function ConstructorClient({
                       {s.latest_run ? `${(s.latest_run.metrics.win_rate * 100).toLocaleString("es-AR", { maximumFractionDigits: 1 })}%` : "—"}
                     </td>
                     <td className="py-3">
-                      <Link href={`/constructor/${s.id}`} className="text-sm font-semibold text-ink underline">
+                      <Link href={`/estrategias/${s.id}`} className="text-sm font-semibold text-ink underline">
                         Ver detalle →
                       </Link>
                     </td>

@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "@/lib/api";
 import { getSessionToken } from "@/lib/session";
-import { ConstructorClient, type ConditionCategory, type DatasetOption, type SavedStrategySummary } from "./ConstructorClient";
+import { EstrategiasClient, type ConditionCategory, type DatasetOption, type SavedStrategySummary } from "./EstrategiasClient";
 
 async function fetchStrategies(): Promise<{ strategies: SavedStrategySummary[]; error: string | null }> {
   const token = await getSessionToken();
@@ -59,7 +59,7 @@ async function fetchSymbols(): Promise<string[]> {
   }
 }
 
-// Catálogo completo del constructor de condiciones (EMA disponible, el resto marcado
+// Catálogo completo de condiciones disponibles (EMA disponible, el resto marcado
 // "Próximamente"). Público, sin auth.
 async function fetchConditionCatalog(): Promise<ConditionCategory[]> {
   try {
@@ -74,7 +74,7 @@ async function fetchConditionCatalog(): Promise<ConditionCategory[]> {
   }
 }
 
-export default async function ConstructorPage() {
+export default async function EstrategiasPage() {
   const [{ strategies, error }, datasets, symbols, conditionCatalog] = await Promise.all([
     fetchStrategies(),
     fetchDatasets(),
@@ -82,7 +82,7 @@ export default async function ConstructorPage() {
     fetchConditionCatalog(),
   ]);
   return (
-    <ConstructorClient
+    <EstrategiasClient
       initialStrategies={strategies}
       initialError={error}
       datasets={datasets}
