@@ -201,6 +201,62 @@ def test_create_session_rejects_duplicate_active_session_same_strategy_symbol_an
     assert "activa" in second.json()["detail"]
 
 
+def test_create_session_rejects_when_max_active_sessions_reached(monkeypatch):
+    from tradingos.api.routers.live_trading import MAX_ACTIVE_LIVE_TRADING_SESSIONS
+
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("tope@example.com")
+    symbols = ["BTCUSDT"] + [f"SYM{i}USDT" for i in range(MAX_ACTIVE_LIVE_TRADING_SESSIONS)]
+    strategy = _create_strategy(token, symbols=symbols)
+    connection = _create_connection(token, monkeypatch)
+
+    for symbol in symbols[:MAX_ACTIVE_LIVE_TRADING_SESSIONS]:
+        response = client.post(
+            "/live-trading/sessions",
+            json=_session_payload(strategy["id"], connection["id"], symbol=symbol),
+            headers=_auth_headers(token),
+        )
+        assert response.status_code == 200, response.json()
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"], symbol=symbols[-1]),
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+    assert "máximo" in response.json()["detail"]
+
+
+def test_create_session_allows_new_session_after_stopping_one_at_the_cap(monkeypatch):
+    from tradingos.api.routers.live_trading import MAX_ACTIVE_LIVE_TRADING_SESSIONS
+
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("tope-liberado@example.com")
+    symbols = ["BTCUSDT"] + [f"SYM{i}USDT" for i in range(MAX_ACTIVE_LIVE_TRADING_SESSIONS)]
+    strategy = _create_strategy(token, symbols=symbols)
+    connection = _create_connection(token, monkeypatch)
+
+    created_ids = []
+    for symbol in symbols[:MAX_ACTIVE_LIVE_TRADING_SESSIONS]:
+        response = client.post(
+            "/live-trading/sessions",
+            json=_session_payload(strategy["id"], connection["id"], symbol=symbol),
+            headers=_auth_headers(token),
+        )
+        assert response.status_code == 200, response.json()
+        created_ids.append(response.json()["id"])
+
+    stop_response = client.post(f"/live-trading/sessions/{created_ids[0]}/stop", headers=_auth_headers(token))
+    assert stop_response.status_code == 200
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"], symbol=symbols[-1]),
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 200
+
+
 def test_create_session_rejects_another_users_connection(monkeypatch):
     _mock_tick_ok(monkeypatch)
     token_a = _register_and_get_token("owner-conn@example.com")

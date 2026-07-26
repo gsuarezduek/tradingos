@@ -24,6 +24,14 @@ router = APIRouter(prefix="/live-trading", tags=["live-trading"])
 # corra más seguido, no se puede ofrecer nada más rápido que esto acá.
 _MIN_LIVE_TRADING_INTERVAL_MS = 15 * 60_000
 
+# Trading Automático no tiene todavía ningún límite de riesgo agregado (exposición total,
+# drawdown diario, etc.) — este es el primero y más simple: un tope duro de sesiones
+# activas simultáneas por usuario, para que activar estrategias sin pensarlo dos veces no
+# termine en un número sin control de cuentas operando plata real a la vez. No es
+# configurable por usuario a propósito: es una baranda de seguridad del sistema, no una
+# preferencia.
+MAX_ACTIVE_LIVE_TRADING_SESSIONS = 5
+
 
 class CreateSessionRequest(BaseModel):
     strategy_id: int
@@ -181,6 +189,20 @@ def create_session(
         raise HTTPException(
             status_code=400,
             detail="ya hay una sesión activa con esta estrategia, símbolo y cuenta — detenela antes de crear otra",
+        )
+
+    active_sessions_count = (
+        db.query(LiveTradingSession)
+        .filter(LiveTradingSession.user_id == user.id, LiveTradingSession.status == "active")
+        .count()
+    )
+    if active_sessions_count >= MAX_ACTIVE_LIVE_TRADING_SESSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"ya tenés {MAX_ACTIVE_LIVE_TRADING_SESSIONS} sesiones de Trading Automático activas — es el "
+                "máximo permitido por ahora. Detené alguna antes de activar una nueva."
+            ),
         )
 
     # Mismo merge que paper trading / _run_and_persist_backtest en api/routers/strategies.py.

@@ -361,8 +361,10 @@ export function TradingAutomaticoClient({
                   {selectedConnection.label} ({exchangeLabel(selectedConnection.exchange)})
                 </span>
                 . A partir de ahora, cada 15 minutos el sistema puede mandar órdenes reales de compra/venta por
-                su cuenta con la plata de esa cuenta, sin pedirte confirmación por cada una. Esta primera
-                versión no tiene ningún límite de riesgo propio más allá de la config de la estrategia.
+                su cuenta con la plata de esa cuenta, sin pedirte confirmación por cada una. Por ahora el único
+                límite de riesgo agregado es un tope de sesiones activas simultáneas por usuario — no hay
+                todavía un freno por pérdida diaria ni un límite de exposición total más allá de la config de
+                cada estrategia.
               </p>
               <div className="mt-4 flex gap-3">
                 <button
