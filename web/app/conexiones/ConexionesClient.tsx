@@ -51,6 +51,38 @@ function formatUsdt(value: number): string {
   return value.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      disabled={disabled}
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+        checked ? "bg-emerald-500" : "bg-border"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+          checked ? "translate-x-6" : "translate-x-1"
+        }`}
+      />
+    </button>
+  );
+}
+
 function TextField({
   label,
   value,
@@ -472,17 +504,17 @@ export function ConexionesClient({
                   >
                     {expandedId === connection.id ? "Ocultar saldos" : "Ver saldos"}
                   </button>
-                  <button
-                    onClick={() => onTradingToggleClick(connection)}
-                    disabled={togglingTradingId === connection.id}
-                    className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted disabled:opacity-50"
-                  >
-                    {togglingTradingId === connection.id
-                      ? "Actualizando…"
-                      : connection.trading_enabled
-                        ? "Deshabilitar trading"
-                        : "Habilitar trading"}
-                  </button>
+                  <div className="flex items-center gap-2 rounded-xl border border-border px-4 py-2">
+                    <span className="text-sm font-semibold text-muted">
+                      {togglingTradingId === connection.id ? "Actualizando…" : "Trading"}
+                    </span>
+                    <Switch
+                      checked={connection.trading_enabled}
+                      onChange={() => onTradingToggleClick(connection)}
+                      disabled={togglingTradingId === connection.id}
+                      label={connection.trading_enabled ? "Deshabilitar trading" : "Habilitar trading"}
+                    />
+                  </div>
                   <button
                     onClick={() => deleteConnection(connection)}
                     className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted"
