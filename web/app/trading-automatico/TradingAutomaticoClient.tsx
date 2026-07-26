@@ -8,6 +8,11 @@ import { EXCHANGES } from "@/lib/exchanges";
 import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
 
+export interface RiskSettings {
+  daily_loss_limit_usdt: number | null;
+  weekly_loss_limit_usdt: number | null;
+}
+
 interface CurrentPosition {
   side: string;
   entry_price: number;
@@ -29,6 +34,7 @@ export interface LiveSessionSummary {
   symbol: string;
   timeframe: string;
   status: string;
+  paused_reason: string | null;
   current_position: CurrentPosition | null;
   last_tick_at: string | null;
   created_at: string;
@@ -38,17 +44,21 @@ function exchangeLabel(value: string): string {
   return EXCHANGES.find((e) => e.value === value)?.label ?? value;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const active = status === "active";
-  return (
-    <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-        active ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
-      }`}
-    >
-      {active ? "Activa" : "Detenida"}
-    </span>
-  );
+function StatusBadge({ status, pausedReason }: { status: string; pausedReason: string | null }) {
+  if (status === "active") {
+    return <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Activa</span>;
+  }
+  if (status === "risk_paused") {
+    return (
+      <span
+        title={pausedReason ?? undefined}
+        className="cursor-help rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700"
+      >
+        Pausada por riesgo
+      </span>
+    );
+  }
+  return <span className="rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-muted">Detenida</span>;
 }
 
 function PositionCell({ position }: { position: CurrentPosition | null }) {
@@ -70,6 +80,7 @@ export function TradingAutomaticoClient({
   connections,
   connectionsError,
   eligibleTimeframes: allEligibleTimeframes,
+  initialRiskSettings,
 }: {
   initialSessions: LiveSessionSummary[];
   sessionsError: string | null;
@@ -78,9 +89,46 @@ export function TradingAutomaticoClient({
   connections: Connection[];
   connectionsError: string | null;
   eligibleTimeframes: string[];
+  initialRiskSettings: RiskSettings;
 }) {
   const [sessions, setSessions] = useState<LiveSessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(sessionsError);
+
+  const [dailyLimitInput, setDailyLimitInput] = useState<string>(
+    initialRiskSettings.daily_loss_limit_usdt?.toString() ?? "",
+  );
+  const [weeklyLimitInput, setWeeklyLimitInput] = useState<string>(
+    initialRiskSettings.weekly_loss_limit_usdt?.toString() ?? "",
+  );
+  const [savingRiskSettings, setSavingRiskSettings] = useState(false);
+  const [riskSettingsError, setRiskSettingsError] = useState<string | null>(null);
+  const [riskSettingsSaved, setRiskSettingsSaved] = useState(false);
+
+  async function saveRiskSettings() {
+    setSavingRiskSettings(true);
+    setRiskSettingsError(null);
+    setRiskSettingsSaved(false);
+    try {
+      const response = await fetch("/api/live-trading/risk-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          daily_loss_limit_usdt: dailyLimitInput === "" ? null : Number(dailyLimitInput),
+          weekly_loss_limit_usdt: weeklyLimitInput === "" ? null : Number(weeklyLimitInput),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setRiskSettingsError(typeof data.detail === "string" ? data.detail : "No se pudieron guardar los límites.");
+        return;
+      }
+      setRiskSettingsSaved(true);
+    } catch {
+      setRiskSettingsError("No se pudo conectar con la API. Probá de nuevo.");
+    } finally {
+      setSavingRiskSettings(false);
+    }
+  }
 
   const isLiveTradeable = (timeframe: string) => allEligibleTimeframes.includes(timeframe);
   const liveTradeable = useMemo(
@@ -180,6 +228,12 @@ export function TradingAutomaticoClient({
               <br />
               &quot;Detener&quot; para el tick, pero <strong>no cierra sola una posición real abierta</strong>{" "}
               — esa decisión es tuya, se cierra manualmente desde Operar Manual si hace falta.
+              <br />
+              <br />
+              Podés configurar un límite de pérdida diaria y/o semanal (suma de todas tus sesiones juntas): si
+              se supera, el sistema pausa solas todas tus sesiones activas — tampoco cierra posiciones abiertas.
+              No hay reactivación automática: revisá qué pasó y creá una sesión nueva cuando quieras volver a
+              operar.
             </InfoGuide>
           </h1>
           <p className="text-sm text-muted">Estrategias guardadas operando solas con plata real</p>
@@ -222,6 +276,56 @@ export function TradingAutomaticoClient({
           {connectionsError}
         </div>
       )}
+
+      <div className="rounded-3xl bg-panel p-8">
+        <h2 className="text-lg font-bold text-ink">Límites de riesgo</h2>
+        <p className="mt-1 text-sm text-muted">
+          Tope de pérdida realizada (suma de todas tus sesiones) antes de que el sistema pause solo todo. Dejalo
+          vacío para desactivar.
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Límite diario (USDT)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Sin límite"
+              value={dailyLimitInput}
+              onChange={(e) => setDailyLimitInput(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Límite semanal (USDT)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Sin límite"
+              value={weeklyLimitInput}
+              onChange={(e) => setWeeklyLimitInput(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              onClick={saveRiskSettings}
+              disabled={savingRiskSettings}
+              className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {savingRiskSettings ? "Guardando…" : "Guardar límites"}
+            </button>
+          </div>
+        </div>
+        {riskSettingsSaved && <p className="mt-3 text-sm text-emerald-600">Límites guardados.</p>}
+        {riskSettingsError && (
+          <p className="mt-3 text-sm text-muted">
+            <span className="font-semibold text-ink">No se pudo guardar: </span>
+            {riskSettingsError}
+          </p>
+        )}
+      </div>
 
       {!strategiesError && strategies.length === 0 && (
         <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
@@ -344,10 +448,10 @@ export function TradingAutomaticoClient({
                   {selectedConnection.label} ({exchangeLabel(selectedConnection.exchange)})
                 </span>
                 . A partir de ahora, cada 15 minutos el sistema puede mandar órdenes reales de compra/venta por
-                su cuenta con la plata de esa cuenta, sin pedirte confirmación por cada una. Por ahora el único
-                límite de riesgo agregado es un tope de sesiones activas simultáneas por usuario — no hay
-                todavía un freno por pérdida diaria ni un límite de exposición total más allá de la config de
-                cada estrategia.
+                su cuenta con la plata de esa cuenta, sin pedirte confirmación por cada una. Los límites de
+                riesgo agregados hoy son un tope de sesiones activas simultáneas por usuario y, si los
+                configuraste más abajo, un freno automático por pérdida diaria/semanal — no hay todavía un
+                límite de exposición por activo o por estrategia más allá de la config de cada una.
               </p>
               <div className="mt-4 flex gap-3">
                 <button
@@ -411,7 +515,7 @@ export function TradingAutomaticoClient({
                     <td className="py-3 pr-4 text-ink">{s.symbol}</td>
                     <td className="py-3 pr-4 text-ink">{s.timeframe}</td>
                     <td className="py-3 pr-4">
-                      <StatusBadge status={s.status} />
+                      <StatusBadge status={s.status} pausedReason={s.paused_reason} />
                     </td>
                     <td className="py-3 pr-4">
                       <PositionCell position={s.current_position} />

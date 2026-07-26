@@ -22,6 +22,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Circuit breaker de Trading Automático (ver live_trading/risk.py): null = sin límite
+    # configurado, opt-in. Montos absolutos en USDT (no %) para no depender de un fetch
+    # de balance en vivo en cada tick — se comparan contra la pérdida realizada agregada
+    # (LiveTrade.pnl) de todas las sesiones del usuario en una ventana rolling de 24h/7d.
+    daily_loss_limit_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weekly_loss_limit_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     broker_connections: Mapped[list["BrokerConnection"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -238,7 +244,13 @@ class LiveTradingSession(Base):
     symbol: Mapped[str] = mapped_column(String(32))
     timeframe: Mapped[str] = mapped_column(String(8))
     config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    # "active" | "stopped" (detenida a mano) | "risk_paused" (pausada sola por el
+    # circuit breaker de riesgo — ver live_trading/risk.py; distinto de "stopped" para
+    # que la UI pueda explicar que no fue el usuario quien la detuvo).
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    # Motivo humano cuando status == "risk_paused" (ej. "límite de pérdida diaria
+    # alcanzado: -$120.00 (límite: $100.00)"); se limpia al detener manualmente.
+    paused_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Lo que la sesión cree tener realmente abierto en el exchange ahora mismo:
     # {side, entry_price, quantity, stop_loss, take_profit, entry_timestamp, opened_at}.
     # entry_timestamp es la marca de la barra simulada (no el reloj real) — es la clave

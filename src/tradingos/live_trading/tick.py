@@ -15,6 +15,7 @@ from tradingos.core.types import Side
 from tradingos.data.binance_downloader import INTERVAL_MS, fetch_klines
 from tradingos.db import crypto
 from tradingos.db.models import LiveOrder, LiveTrade, LiveTradingSession
+from tradingos.live_trading.risk import check_loss_limits, pause_active_sessions_for_risk
 
 # Mismo motor y misma ventana que paper_trading/tick.py — ver ese módulo para el porqué
 # de LOOKBACK_BARS (en velas, no en tiempo) y su límite conocido (una posición abierta
@@ -232,10 +233,28 @@ def run_tick_for_session(db: Session, session: LiveTradingSession) -> None:
 
 def run_all_active(db: Session) -> int:
     """Corre el tick de todas las LiveTradingSession activas. Una sesión que falla
-    (símbolo inválido, exchange caído, etc.) no aborta el resto del batch."""
+    (símbolo inválido, exchange caído, etc.) no aborta el resto del batch.
+
+    Antes de tickear la primera sesión de cada usuario en esta corrida, chequea el
+    circuit breaker de pérdida (live_trading/risk.py). Si está superado, pausa TODAS las
+    sesiones activas de ese usuario y no tickea ninguna en esta corrida — gracias al
+    identity map de SQLAlchemy, pausar mutando esos objetos alcanza para que las demás
+    sesiones del mismo usuario ya cargadas en `sessions` reflejen el cambio sin releer.
+    """
     sessions = db.query(LiveTradingSession).filter(LiveTradingSession.status == "active").all()
     processed = 0
+    checked_users: set[int] = set()
     for session in sessions:
+        if session.status != "active":
+            continue  # ya se pausó por riesgo al procesar otra sesión de este mismo usuario
+
+        if session.user_id not in checked_users:
+            checked_users.add(session.user_id)
+            breach = check_loss_limits(db, session.user)
+            if breach is not None:
+                pause_active_sessions_for_risk(db, session.user, breach)
+                continue
+
         try:
             run_tick_for_session(db, session)
             processed += 1

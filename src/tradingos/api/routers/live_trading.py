@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
@@ -12,6 +12,7 @@ from tradingos.core.strategy import StrategyConfig
 from tradingos.data.binance_downloader import INTERVAL_MS
 from tradingos.db.models import BrokerConnection, LiveOrder, LiveTrade, LiveTradingSession, SavedStrategy, User
 from tradingos.db.session import get_db
+from tradingos.live_trading.risk import check_loss_limits
 from tradingos.live_trading.tick import run_tick_for_session
 
 router = APIRouter(prefix="/live-trading", tags=["live-trading"])
@@ -24,12 +25,12 @@ router = APIRouter(prefix="/live-trading", tags=["live-trading"])
 # corra más seguido, no se puede ofrecer nada más rápido que esto acá.
 _MIN_LIVE_TRADING_INTERVAL_MS = 15 * 60_000
 
-# Trading Automático no tiene todavía ningún límite de riesgo agregado (exposición total,
-# drawdown diario, etc.) — este es el primero y más simple: un tope duro de sesiones
-# activas simultáneas por usuario, para que activar estrategias sin pensarlo dos veces no
-# termine en un número sin control de cuentas operando plata real a la vez. No es
-# configurable por usuario a propósito: es una baranda de seguridad del sistema, no una
-# preferencia.
+# Tope duro de sesiones activas simultáneas por usuario, para que activar estrategias sin
+# pensarlo dos veces no termine en un número sin control de cuentas operando plata real a
+# la vez. No es configurable por usuario a propósito: es una baranda de seguridad del
+# sistema, no una preferencia (a diferencia de los límites de pérdida diaria/semanal en
+# live_trading/risk.py, que sí son configurables — ahí la tolerancia al riesgo es
+# personal, acá el límite de infraestructura no depende de quién sea el usuario).
 MAX_ACTIVE_LIVE_TRADING_SESSIONS = 5
 
 # Temporalidades que se pueden activar en Trading Automático, derivadas del piso de
@@ -44,6 +45,23 @@ ELIGIBLE_LIVE_TRADING_TIMEFRAMES = sorted(
 
 class LimitsResponse(BaseModel):
     eligible_timeframes: list[str]
+
+
+class RiskSettingsResponse(BaseModel):
+    daily_loss_limit_usdt: float | None
+    weekly_loss_limit_usdt: float | None
+
+
+class UpdateRiskSettingsRequest(BaseModel):
+    daily_loss_limit_usdt: float | None = None
+    weekly_loss_limit_usdt: float | None = None
+
+    @field_validator("daily_loss_limit_usdt", "weekly_loss_limit_usdt")
+    @classmethod
+    def _positive_if_set(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError("debe ser un valor positivo, o null para desactivar el límite")
+        return v
 
 
 class CreateSessionRequest(BaseModel):
@@ -85,6 +103,7 @@ class SessionResponse(BaseModel):
     symbol: str
     timeframe: str
     status: str
+    paused_reason: str | None
     config: dict[str, Any]
     current_position: dict[str, Any] | None
     last_tick_at: str | None
@@ -108,6 +127,7 @@ def _to_session_response(session: LiveTradingSession) -> SessionResponse:
         symbol=session.symbol,
         timeframe=session.timeframe,
         status=session.status,
+        paused_reason=session.paused_reason,
         config=session.config,
         current_position=session.current_position,
         last_tick_at=session.last_tick_at.isoformat() if session.last_tick_at else None,
@@ -151,10 +171,41 @@ def limits(user: User = Depends(get_current_user)) -> LimitsResponse:
     return LimitsResponse(eligible_timeframes=ELIGIBLE_LIVE_TRADING_TIMEFRAMES)
 
 
+@router.get("/risk-settings", response_model=RiskSettingsResponse)
+def get_risk_settings(user: User = Depends(get_current_user)) -> RiskSettingsResponse:
+    return RiskSettingsResponse(
+        daily_loss_limit_usdt=user.daily_loss_limit_usdt,
+        weekly_loss_limit_usdt=user.weekly_loss_limit_usdt,
+    )
+
+
+@router.patch("/risk-settings", response_model=RiskSettingsResponse)
+def update_risk_settings(
+    request: UpdateRiskSettingsRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> RiskSettingsResponse:
+    # Reemplaza los dos campos enteros (no un merge parcial) — el cliente siempre manda
+    # el estado completo del form; un campo en null lo desactiva explícitamente.
+    user.daily_loss_limit_usdt = request.daily_loss_limit_usdt
+    user.weekly_loss_limit_usdt = request.weekly_loss_limit_usdt
+    db.commit()
+    db.refresh(user)
+    return RiskSettingsResponse(
+        daily_loss_limit_usdt=user.daily_loss_limit_usdt,
+        weekly_loss_limit_usdt=user.weekly_loss_limit_usdt,
+    )
+
+
 @router.post("/sessions", response_model=SessionResponse)
 def create_session(
     request: CreateSessionRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> SessionResponse:
+    breach = check_loss_limits(db, user)
+    if breach is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"no se puede activar: {breach.reason()} — revisá tus límites de riesgo antes de operar de nuevo",
+        )
+
     if request.timeframe not in SUPPORTED_TIMEFRAMES:
         raise HTTPException(
             status_code=400,
@@ -325,6 +376,7 @@ def stop_session(
     cerrarla es una decisión que le corresponde a él, no al sistema."""
     session = _get_owned_session(session_id, user, db)
     session.status = "stopped"
+    session.paused_reason = None
     db.commit()
     db.refresh(session)
     return _to_session_response(session)

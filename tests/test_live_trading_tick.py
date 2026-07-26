@@ -13,8 +13,8 @@ from tradingos.db.session import SessionLocal
 from tradingos.strategies.ma_crossover import default_config
 
 
-def _make_user(db, email: str) -> User:
-    user = User(email=email, hashed_password=hash_password("hunter22"))
+def _make_user(db, email: str, **overrides) -> User:
+    user = User(email=email, hashed_password=hash_password("hunter22"), **overrides)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -280,6 +280,55 @@ def test_run_all_active_only_processes_active_sessions(monkeypatch, synthetic_oh
         db.refresh(stopped)
         assert active.last_tick_at is not None
         assert stopped.last_tick_at is None
+    finally:
+        db.close()
+
+
+def test_run_all_active_pauses_sessions_of_a_user_that_breached_its_loss_limit(monkeypatch, synthetic_ohlcv):
+    from datetime import datetime, timedelta, timezone as tz
+
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: synthetic_ohlcv)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("un usuario en breach no debería mandar ninguna orden en esta corrida")
+
+    db = SessionLocal()
+    try:
+        breaching_user = _make_user(db, "breaching@example.com", daily_loss_limit_usdt=50.0)
+        breaching_connection = _make_connection(db, breaching_user)
+        breaching_strategy = _make_strategy(db, breaching_user)
+        breaching_session = _make_session(db, breaching_user, breaching_strategy, breaching_connection)
+        db.add(
+            LiveTrade(
+                session_id=breaching_session.id,
+                side="long",
+                entry_timestamp=datetime.now(tz.utc) - timedelta(hours=2),
+                exit_timestamp=datetime.now(tz.utc) - timedelta(hours=1),
+                entry_price=100.0,
+                exit_price=40.0,
+                quantity=1.0,
+                pnl=-60.0,
+            )
+        )
+        db.commit()
+
+        ok_user = _make_user(db, "ok@example.com")
+        ok_connection = _make_connection(db, ok_user)
+        ok_strategy = _make_strategy(db, ok_user)
+        ok_session = _make_session(db, ok_user, ok_strategy, ok_connection)
+
+        monkeypatch.setattr("tradingos.api.routers.brokers.binance_place_market_order", _fail_if_called)
+
+        processed = tick_module.run_all_active(db)
+
+        assert processed == 1  # solo la del usuario sin breach
+        db.refresh(breaching_session)
+        db.refresh(ok_session)
+        assert breaching_session.status == "risk_paused"
+        assert breaching_session.paused_reason is not None
+        assert breaching_session.last_tick_at is None  # nunca se llegó a tickear
+        assert ok_session.last_tick_at is not None
     finally:
         db.close()
 

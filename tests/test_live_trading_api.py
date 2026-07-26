@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from tradingos.api.main import app
-from tradingos.db.models import LiveTradingSession
+from tradingos.db.models import LiveTrade, LiveTradingSession, User
 from tradingos.db.session import SessionLocal
 from tradingos.strategies.ma_crossover import default_config
 
@@ -121,6 +121,98 @@ def test_limits_reports_eligible_timeframes_matching_the_cron_floor(monkeypatch)
     eligible = response.json()["eligible_timeframes"]
     assert "5m" not in eligible  # más rápida que el cron
     assert eligible == ["15m", "30m", "1h", "4h", "1d", "1w"]  # ordenadas de más rápida a más lenta
+
+
+def test_risk_settings_round_trip(monkeypatch):
+    token = _register_and_get_token("risksettings@example.com")
+
+    initial = client.get("/live-trading/risk-settings", headers=_auth_headers(token))
+    assert initial.status_code == 200
+    assert initial.json() == {"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": None}
+
+    updated = client.patch(
+        "/live-trading/risk-settings",
+        json={"daily_loss_limit_usdt": 100.0, "weekly_loss_limit_usdt": 300.0},
+        headers=_auth_headers(token),
+    )
+    assert updated.status_code == 200
+    assert updated.json() == {"daily_loss_limit_usdt": 100.0, "weekly_loss_limit_usdt": 300.0}
+
+    disabled = client.patch(
+        "/live-trading/risk-settings",
+        json={"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": 300.0},
+        headers=_auth_headers(token),
+    )
+    assert disabled.status_code == 200
+    assert disabled.json() == {"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": 300.0}
+
+
+def test_risk_settings_rejects_non_positive_limit(monkeypatch):
+    token = _register_and_get_token("risksettingsneg@example.com")
+
+    response = client.patch(
+        "/live-trading/risk-settings",
+        json={"daily_loss_limit_usdt": -10.0, "weekly_loss_limit_usdt": None},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 422
+
+
+def test_create_session_rejected_when_daily_loss_limit_is_breached(monkeypatch):
+    _mock_tick_ok(monkeypatch)
+    token = _register_and_get_token("breached@example.com")
+    strategy = _create_strategy(token)
+    connection = _create_connection(token, monkeypatch)
+
+    set_limit = client.patch(
+        "/live-trading/risk-settings",
+        json={"daily_loss_limit_usdt": 50.0, "weekly_loss_limit_usdt": None},
+        headers=_auth_headers(token),
+    )
+    assert set_limit.status_code == 200
+
+    db = SessionLocal()
+    try:
+        from datetime import datetime, timedelta, timezone
+
+        user = db.query(User).filter(User.email == "breached@example.com").first()
+        session = LiveTradingSession(
+            user_id=user.id,
+            strategy_id=strategy["id"],
+            broker_connection_id=connection["id"],
+            exchange="binance",
+            strategy="ma_crossover",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            config=default_config(symbol="BTCUSDT").model_dump(),
+            status="stopped",
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        db.add(
+            LiveTrade(
+                session_id=session.id,
+                side="long",
+                entry_timestamp=datetime.now(timezone.utc) - timedelta(hours=2),
+                exit_timestamp=datetime.now(timezone.utc) - timedelta(hours=1),
+                entry_price=100.0,
+                exit_price=40.0,
+                quantity=1.0,
+                pnl=-60.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/live-trading/sessions",
+        json=_session_payload(strategy["id"], connection["id"]),
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 400
+    assert "límite de pérdida diaria" in response.json()["detail"]
 
 
 def test_create_session_rejects_unknown_strategy(monkeypatch):

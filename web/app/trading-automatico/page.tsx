@@ -3,7 +3,7 @@ import { getSessionToken } from "@/lib/session";
 import { EXCHANGES } from "@/lib/exchanges";
 import type { SavedStrategySummary } from "@/app/estrategias/EstrategiasClient";
 import type { Connection } from "@/app/operar/OperarClient";
-import { TradingAutomaticoClient, type LiveSessionSummary } from "./TradingAutomaticoClient";
+import { TradingAutomaticoClient, type LiveSessionSummary, type RiskSettings } from "./TradingAutomaticoClient";
 
 async function fetchSessions(token: string): Promise<{ sessions: LiveSessionSummary[]; error: string | null }> {
   try {
@@ -69,6 +69,27 @@ async function fetchLimits(token: string): Promise<{ eligibleTimeframes: string[
   }
 }
 
+async function fetchRiskSettings(token: string): Promise<{ riskSettings: RiskSettings; error: string | null }> {
+  const fallback: RiskSettings = { daily_loss_limit_usdt: null, weekly_loss_limit_usdt: null };
+  try {
+    const response = await fetch(`${API_BASE_URL}/live-trading/risk-settings`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return {
+        riskSettings: fallback,
+        error: typeof data.detail === "string" ? data.detail : "No se pudieron cargar los límites de riesgo.",
+      };
+    }
+    return { riskSettings: data, error: null };
+  } catch {
+    return { riskSettings: fallback, error: "No se pudo conectar con la API." };
+  }
+}
+
 async function fetchConnections(token: string): Promise<{ connections: Connection[]; error: string | null }> {
   try {
     const responses = await Promise.all(
@@ -108,6 +129,7 @@ export default async function TradingAutomaticoPage() {
         connections={[]}
         connectionsError="no autenticado"
         eligibleTimeframes={[]}
+        initialRiskSettings={{ daily_loss_limit_usdt: null, weekly_loss_limit_usdt: null }}
       />
     );
   }
@@ -117,7 +139,14 @@ export default async function TradingAutomaticoPage() {
     { strategies, error: strategiesError },
     { connections, error: connectionsError },
     { eligibleTimeframes },
-  ] = await Promise.all([fetchSessions(token), fetchStrategies(token), fetchConnections(token), fetchLimits(token)]);
+    { riskSettings },
+  ] = await Promise.all([
+    fetchSessions(token),
+    fetchStrategies(token),
+    fetchConnections(token),
+    fetchLimits(token),
+    fetchRiskSettings(token),
+  ]);
 
   return (
     <TradingAutomaticoClient
@@ -128,6 +157,7 @@ export default async function TradingAutomaticoPage() {
       connections={connections}
       connectionsError={connectionsError}
       eligibleTimeframes={eligibleTimeframes}
+      initialRiskSettings={riskSettings}
     />
   );
 }
