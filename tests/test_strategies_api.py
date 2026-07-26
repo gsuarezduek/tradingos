@@ -438,6 +438,38 @@ def test_condition_based_strategy_rejects_empty_group():
     assert response.status_code == 422
 
 
+def test_condition_based_strategy_rejects_duplicate_condition_in_same_group():
+    token = _register_and_get_token("condicion-repetida@example.com")
+    payload = _condition_based_payload(
+        entry_rules=[
+            [
+                {"category": "ema", "condition_type": "price_above", "params": {"period": 20}},
+                {"category": "ema", "condition_type": "price_above", "params": {"period": 20}},
+            ]
+        ]
+    )
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 400
+    assert "repetida" in response.json()["detail"]
+
+
+def test_condition_based_strategy_allows_same_condition_across_different_groups():
+    token = _register_and_get_token("condicion-en-dos-grupos@example.com")
+    payload = _condition_based_payload(
+        entry_rules=[
+            [{"category": "ema", "condition_type": "price_above", "params": {"period": 20}}],
+            [
+                {"category": "ema", "condition_type": "price_above", "params": {"period": 20}},
+                {"category": "rsi", "condition_type": "rsi_below_50", "params": {}},
+            ],
+        ]
+    )
+    response = client.post("/strategies", json=payload, headers=_auth_headers(token))
+
+    assert response.status_code == 200
+
+
 def test_legacy_flat_entry_rules_are_normalized_and_still_run():
     # Estrategias guardadas antes de que existieran los grupos tienen entry_rules como
     # lista plana de condiciones en la DB (no lista de grupos). El GET debe devolverlas

@@ -296,6 +296,17 @@ export function MultiSymbolCombobox({
   );
 }
 
+function paramsKey(params: Record<string, number>): string {
+  return Object.keys(params)
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join(",");
+}
+
+function conditionsEqual(a: Condition, b: Condition): boolean {
+  return a.category === b.category && a.condition_type === b.condition_type && paramsKey(a.params) === paramsKey(b.params);
+}
+
 export function conditionLabel(catalog: ConditionCategory[], condition: Condition): string {
   const conditionType = catalog
     .find((c) => c.category === condition.category)
@@ -328,6 +339,7 @@ export function ConditionBuilder({
   const [category, setCategory] = useState(firstAvailable?.category ?? "");
   const [conditionType, setConditionType] = useState(firstAvailable?.condition_types[0]?.type ?? "");
   const [params, setParams] = useState<Record<string, number>>({});
+  const [duplicateWarning, setDuplicateWarning] = useState(false);
 
   const selectedCategory = catalog.find((c) => c.category === category);
   const selectedType = selectedCategory?.condition_types.find((t) => t.type === conditionType);
@@ -336,6 +348,7 @@ export function ConditionBuilder({
     setCategory(category.category);
     setConditionType(type.type);
     setParams(Object.fromEntries(type.params.map((p) => [p, PARAM_DEFAULTS[p] ?? 1])));
+    setDuplicateWarning(false);
   }
 
   function startAdding(nextTarget: AddTarget) {
@@ -346,12 +359,18 @@ export function ConditionBuilder({
   function confirmAdd() {
     if (!selectedCategory?.available || !selectedType || target === null) return;
     const condition: Condition = { category, condition_type: conditionType, params };
+    const targetGroup = target === "new" ? [] : groups[target];
+    if (targetGroup.some((c) => conditionsEqual(c, condition))) {
+      setDuplicateWarning(true);
+      return;
+    }
     if (target === "new") {
       onChange([...groups, [condition]]);
     } else {
       onChange(groups.map((group, i) => (i === target ? [...group, condition] : group)));
     }
     setTarget(null);
+    setDuplicateWarning(false);
   }
 
   function removeCondition(groupIndex: number, conditionIndex: number) {
@@ -419,12 +438,19 @@ export function ConditionBuilder({
                     min={p === "threshold_pct" ? "0.1" : "1"}
                     step={p === "threshold_pct" ? "0.1" : "1"}
                     value={params[p] ?? ""}
-                    onChange={(e) => setParams((prev) => ({ ...prev, [p]: Number(e.target.value) }))}
+                    onChange={(e) => {
+                      setParams((prev) => ({ ...prev, [p]: Number(e.target.value) }));
+                      setDuplicateWarning(false);
+                    }}
                     className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
                   />
                 </label>
               ))}
             </div>
+          )}
+
+          {duplicateWarning && (
+            <p className="text-xs font-semibold text-red-600">Ya agregaste esta misma condición en este grupo.</p>
           )}
 
           <div className="flex gap-2">
@@ -438,7 +464,10 @@ export function ConditionBuilder({
             </button>
             <button
               type="button"
-              onClick={() => setTarget(null)}
+              onClick={() => {
+                setTarget(null);
+                setDuplicateWarning(false);
+              }}
               className="w-fit rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted"
             >
               Cancelar

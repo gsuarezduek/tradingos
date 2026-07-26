@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 import tradingos.strategies  # noqa: F401  (registra condition_based y ma_crossover)
 from tradingos.backtest.broker_sim import BrokerSimConfig, SimulatedBroker
@@ -16,6 +17,7 @@ from tradingos.core.conditions import (
     evaluate_rule_groups,
     evaluate_volume_condition,
     normalize_rule_groups,
+    validate_rule_groups,
 )
 from tradingos.core.strategy import StrategyConfig, StrategyContext, get_strategy
 
@@ -330,6 +332,33 @@ def test_normalize_rule_groups_keeps_grouped_shape():
 
 def test_normalize_rule_groups_empty():
     assert normalize_rule_groups([]) == []
+
+
+def test_validate_rule_groups_rejects_duplicate_condition_within_same_group():
+    duplicated = [
+        [
+            Condition(category="ema", condition_type="price_above", params={"period": 20}),
+            Condition(category="ema", condition_type="price_above", params={"period": 20}),
+        ]
+    ]
+    with pytest.raises(ValueError, match="repetida"):
+        validate_rule_groups(duplicated)
+
+
+def test_validate_rule_groups_allows_same_condition_across_different_groups():
+    # A O A no tiene sentido, pero repetir una sub-condición compartida entre dos
+    # alternativas (grupos) sí es un patrón legítimo: (A Y B) O (A Y C).
+    groups = [
+        [
+            Condition(category="ema", condition_type="price_above", params={"period": 20}),
+            Condition(category="rsi", condition_type="rsi_below_50"),
+        ],
+        [
+            Condition(category="ema", condition_type="price_above", params={"period": 20}),
+            Condition(category="rsi", condition_type="rsi_above_50"),
+        ],
+    ]
+    validate_rule_groups(groups)  # no debe lanzar
 
 
 def test_evaluate_rule_groups_is_or_of_and():

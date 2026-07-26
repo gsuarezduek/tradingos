@@ -205,8 +205,19 @@ def normalize_rule_groups(raw: list) -> list[list[Condition]]:
 
 def validate_rule_groups(groups: list[list[Condition]]) -> None:
     for group in groups:
+        seen: list[Condition] = []
         for condition in group:
             validate_condition(condition)
+            # Misma categoría+tipo+params repetida dentro de un mismo grupo (Y) es
+            # siempre redundante (A Y A = A) — casi siempre un error de tipeo del
+            # usuario en el constructor, no algo que alguien quiera a propósito. Entre
+            # grupos distintos (O) sí tiene sentido repetir una condición (una
+            # sub-condición compartida entre dos alternativas), así que ahí no se valida.
+            if condition in seen:
+                raise ValueError(
+                    f"la condición '{condition.condition_type}' está repetida dentro del mismo grupo"
+                )
+            seen.append(condition)
 
 
 def required_ema_periods(conditions: list[Condition]) -> set[int]:
