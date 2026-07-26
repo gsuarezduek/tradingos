@@ -9,9 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from tradingos.auth.dependencies import get_current_user
-from tradingos.core.strategy import StrategyConfig, get_strategy
+from tradingos.core.strategy import StrategyConfig
 from tradingos.data.binance_downloader import fetch_spot_symbols
-from tradingos.db.models import PaperTrade, PaperTradingSession, User
+from tradingos.db.models import PaperTrade, PaperTradingSession, SavedStrategy, User
 from tradingos.db.session import get_db
 from tradingos.paper_trading.tick import run_tick_for_session
 
@@ -36,13 +36,19 @@ def _get_cached_symbols() -> list[str]:
 
 
 class CreateSessionRequest(BaseModel):
-    strategy: str = "ma_crossover"
-    config: StrategyConfig
+    strategy_id: int
+    symbol: str
+    timeframe: str
     initial_equity: float = 10_000.0
 
 
 class SessionResponse(BaseModel):
     id: int
+    strategy_id: int | None
+    # Nombre de la SavedStrategy al momento de listar (no un snapshot: si el usuario la
+    # renombra después, acá se ve el nombre actual). None si la sesión es de antes de
+    # que paper trading se enganchara al Constructor, o si la estrategia ya no existe.
+    strategy_name: str | None
     strategy: str
     symbol: str
     timeframe: str
@@ -74,6 +80,8 @@ class SessionDetailResponse(SessionResponse):
 def _to_session_response(session: PaperTradingSession) -> SessionResponse:
     return SessionResponse(
         id=session.id,
+        strategy_id=session.strategy_id,
+        strategy_name=session.saved_strategy.name if session.saved_strategy else None,
         strategy=session.strategy,
         symbol=session.symbol,
         timeframe=session.timeframe,
@@ -98,6 +106,15 @@ def _get_owned_session(session_id: int, user: User, db: Session) -> PaperTrading
     return session
 
 
+def _get_owned_strategy(strategy_id: int, user: User, db: Session) -> SavedStrategy:
+    strategy = (
+        db.query(SavedStrategy).filter(SavedStrategy.id == strategy_id, SavedStrategy.user_id == user.id).first()
+    )
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="estrategia no encontrada")
+    return strategy
+
+
 @router.get("/symbols", response_model=list[str])
 def list_symbols(user: User = Depends(get_current_user)) -> list[str]:
     try:
@@ -110,22 +127,37 @@ def list_symbols(user: User = Depends(get_current_user)) -> list[str]:
 def create_session(
     request: CreateSessionRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> SessionResponse:
-    if request.config.timeframe != _SUPPORTED_TIMEFRAME:
+    if request.timeframe != _SUPPORTED_TIMEFRAME:
         raise HTTPException(status_code=400, detail=f"timeframe no soportado todavía: solo '{_SUPPORTED_TIMEFRAME}'")
 
-    try:
-        get_strategy(request.strategy)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    strategy = _get_owned_strategy(request.strategy_id, user, db)
+    if request.symbol not in strategy.symbols:
+        raise HTTPException(status_code=400, detail=f"'{request.symbol}' no está entre los mercados de la estrategia")
+    if request.timeframe not in strategy.timeframes:
+        raise HTTPException(status_code=400, detail=f"'{request.timeframe}' no está entre las temporalidades de la estrategia")
+
+    # Mismo merge que _run_and_persist_backtest en api/routers/strategies.py: la config
+    # base de la estrategia + symbol/timeframe elegidos para esta sesión + sus reglas de
+    # entrada/salida (si es una estrategia por condiciones).
+    effective_config = StrategyConfig.model_validate(
+        {
+            **strategy.config,
+            "symbol": request.symbol,
+            "timeframe": request.timeframe,
+            "entry_rules": strategy.entry_rules,
+            "exit_rules": strategy.exit_rules,
+        }
+    )
 
     # Sin límite de sesiones activas simultáneas por usuario: cada una corre
     # independiente en el tick del cron (run_all_active ya itera todas las activas).
     session = PaperTradingSession(
         user_id=user.id,
-        strategy=request.strategy,
-        symbol=request.config.symbol,
-        timeframe=request.config.timeframe,
-        config=request.config.model_dump(),
+        strategy_id=strategy.id,
+        strategy=strategy.strategy_type,
+        symbol=request.symbol,
+        timeframe=request.timeframe,
+        config=effective_config.model_dump(),
         initial_equity=request.initial_equity,
         current_equity=request.initial_equity,
         equity_curve=[],

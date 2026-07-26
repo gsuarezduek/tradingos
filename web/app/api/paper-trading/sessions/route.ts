@@ -21,7 +21,12 @@ export async function POST(request: Request) {
   const response = await fetch(`${API_BASE_URL}/paper-trading/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ config: body.config, initial_equity: body.initial_equity }),
+    body: JSON.stringify({
+      strategy_id: body.strategy_id,
+      symbol: body.symbol,
+      timeframe: body.timeframe,
+      initial_equity: body.initial_equity,
+    }),
     signal: AbortSignal.timeout(20000), // corre el primer tick al toque, no solo crea el registro
   });
   const data = await response.json();

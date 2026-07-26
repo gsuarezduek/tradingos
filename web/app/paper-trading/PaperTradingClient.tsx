@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { DataBadge } from "@/components/DataBadge";
 import { InfoGuide } from "@/components/InfoGuide";
+import type { SavedStrategySummary } from "@/app/constructor/ConstructorClient";
 
-// Pares más operados como sugerencia inicial (antes de escribir); se filtran contra la
-// lista real de Binance por si alguno dejara de estar disponible.
-const POPULAR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ETHBTC", "BNBBTC", "BNBETH"];
-const MAX_SUGGESTIONS = 30;
+// Único timeframe que soporta el tick de paper trading hoy (ver LOOKBACK_BARS en
+// paper_trading/tick.py, que asume velas de 1h). Una estrategia puede declarar otras
+// temporalidades para backtest, pero solo se puede paper-tradear en esta.
+const PAPER_TRADING_TIMEFRAME = "1h";
 
 export interface SessionSummary {
   id: number;
+  strategy_id: number | null;
+  strategy_name: string | null;
   strategy: string;
   symbol: string;
   timeframe: string;
@@ -22,38 +25,25 @@ export interface SessionSummary {
   created_at: string;
 }
 
-interface FormState {
-  symbol: string;
-  emaFastPeriod: number;
-  emaSlowPeriod: number;
-  atrPeriod: number;
-  atrMinValuePct: number;
-  stopLossPct: number;
-  takeProfitPct: number;
-  trailingStopPct: number;
-  riskPerTrade: number;
-  initialEquity: number;
+function StatusBadge({ status }: { status: string }) {
+  const active = status === "active";
+  return (
+    <span
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+        active ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
+      }`}
+    >
+      {active ? "Activa" : "Detenida"}
+    </span>
+  );
 }
-
-const DEFAULTS: FormState = {
-  symbol: "BTCUSDT",
-  emaFastPeriod: 12,
-  emaSlowPeriod: 26,
-  atrPeriod: 14,
-  atrMinValuePct: 0.1,
-  stopLossPct: 2,
-  takeProfitPct: 4,
-  trailingStopPct: 1.5,
-  riskPerTrade: 1,
-  initialEquity: 10000,
-};
 
 function Field({
   label,
   value,
   onChange,
-  step = "0.1",
-  min = "0",
+  step = "100",
+  min = "100",
 }: {
   label: string;
   value: number;
@@ -76,119 +66,35 @@ function Field({
   );
 }
 
-function buildConfig(form: FormState) {
-  return {
-    symbol: form.symbol,
-    timeframe: "1h",
-    stop_loss_pct: form.stopLossPct / 100,
-    take_profit_pct: form.takeProfitPct / 100,
-    trailing_stop_pct: form.trailingStopPct / 100,
-    risk_per_trade: form.riskPerTrade / 100,
-    position_sizing: { method: "risk_fraction" },
-    indicators: {
-      ema_fast: { period: form.emaFastPeriod },
-      ema_slow: { period: form.emaSlowPeriod },
-      atr: { period: form.atrPeriod, min_value_pct: form.atrMinValuePct / 100 },
-    },
-  };
-}
-
-function SymbolCombobox({
-  value,
-  symbols,
-  onChange,
-}: {
-  value: string;
-  symbols: string[];
-  onChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const query = value.trim().toUpperCase();
-  const suggestions = query
-    ? symbols.filter((s) => s.includes(query)).slice(0, MAX_SUGGESTIONS)
-    : POPULAR_SYMBOLS.filter((s) => symbols.length === 0 || symbols.includes(s));
-
-  const knownSymbol = symbols.length === 0 || symbols.includes(query);
-
-  return (
-    <div ref={containerRef} className="relative flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted">Símbolo</span>
-      <input
-        type="text"
-        value={value}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          onChange(e.target.value.toUpperCase());
-          setOpen(true);
-        }}
-        placeholder="Ej: BTCUSDT"
-        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
-      />
-      {!knownSymbol && <span className="text-xs text-red-600">no está en la lista de pares de Binance</span>}
-      {open && suggestions.length > 0 && (
-        <ul className="absolute top-full z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-border bg-surface shadow-lg">
-          {suggestions.map((s) => (
-            <li key={s}>
-              <button
-                type="button"
-                onClick={() => {
-                  onChange(s);
-                  setOpen(false);
-                }}
-                className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-panel"
-              >
-                {s}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const active = status === "active";
-  return (
-    <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-        active ? "bg-emerald-100 text-emerald-700" : "bg-surface text-muted"
-      }`}
-    >
-      {active ? "Activa" : "Detenida"}
-    </span>
-  );
-}
-
 export function PaperTradingClient({
   initialSessions,
   initialError,
-  symbols,
+  strategies,
+  strategiesError,
 }: {
   initialSessions: SessionSummary[];
   initialError: string | null;
-  symbols: string[];
+  strategies: SavedStrategySummary[];
+  strategiesError: string | null;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>(initialSessions);
   const [loadError, setLoadError] = useState<string | null>(initialError);
 
-  const [form, setForm] = useState<FormState>(DEFAULTS);
+  const paperTradeable = useMemo(() => strategies.filter((s) => s.timeframes.includes(PAPER_TRADING_TIMEFRAME)), [strategies]);
+
+  const [strategyId, setStrategyId] = useState<number | null>(paperTradeable[0]?.id ?? null);
+  const selectedStrategy = strategies.find((s) => s.id === strategyId) ?? null;
+  const [symbol, setSymbol] = useState<string>(paperTradeable[0]?.symbols[0] ?? "");
+  const [initialEquity, setInitialEquity] = useState(10000);
+
   const [showForm, setShowForm] = useState(initialSessions.length === 0);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  function selectStrategy(id: number) {
+    setStrategyId(id);
+    const strategy = strategies.find((s) => s.id === id);
+    setSymbol(strategy?.symbols[0] ?? "");
   }
 
   async function reloadSessions() {
@@ -202,6 +108,7 @@ export function PaperTradingClient({
   }
 
   async function createSession() {
+    if (strategyId === null || !symbol) return;
     setCreating(true);
     setCreateError(null);
 
@@ -209,7 +116,12 @@ export function PaperTradingClient({
       const response = await fetch("/api/paper-trading/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: buildConfig(form), initial_equity: form.initialEquity }),
+        body: JSON.stringify({
+          strategy_id: strategyId,
+          symbol,
+          timeframe: PAPER_TRADING_TIMEFRAME,
+          initial_equity: initialEquity,
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -219,7 +131,6 @@ export function PaperTradingClient({
 
       setLoadError(null);
       setShowForm(false);
-      setForm(DEFAULTS);
       await reloadSessions();
     } catch {
       setCreateError("No se pudo conectar con la API. Probá de nuevo.");
@@ -229,7 +140,6 @@ export function PaperTradingClient({
   }
 
   const activeCount = sessions.filter((s) => s.status === "active").length;
-  const symbolValid = symbols.length === 0 || symbols.includes(form.symbol.trim().toUpperCase());
 
   return (
     <div className="flex flex-col gap-8">
@@ -238,23 +148,20 @@ export function PaperTradingClient({
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
             Paper Trading
             <InfoGuide>
-              Paper Trading simula la ejecución de una estrategia contra el mercado real en curso, sin
-              usar plata real. Cada sesión corre el motor de backtest cada 15 minutos (vía un servicio
-              cron) sobre las últimas velas cerradas del símbolo elegido, y actualiza el equity, la
-              posición abierta y las operaciones cerradas.
+              Paper Trading toma una de tus estrategias guardadas en el Constructor y simula su ejecución
+              contra el mercado real en curso, sin usar plata real. Cada sesión corre el motor de backtest
+              cada 15 minutos (vía un servicio cron) sobre las últimas velas cerradas del símbolo elegido, y
+              actualiza el equity, la posición abierta y las operaciones cerradas.
               <br />
               <br />
-              El campo Símbolo autocompleta contra la lista real de pares spot de Binance (empezá a
-              escribir, ej. &quot;BTC&quot;) — solo se pueden lanzar sesiones sobre pares que Binance
-              efectivamente opera.
+              Solo se puede paper-tradear en 1h por ahora, y solo mercados que la estrategia declaró en el
+              Constructor. Si no ves una estrategia acá, o su símbolo, revisá su configuración ahí primero.
               <br />
               <br />
-              Podés tener varias sesiones corriendo en simultáneo: dale a &quot;+ Nueva sesión&quot; las
-              veces que quieras sin necesidad de detener las que ya están activas. Esta pantalla lista
-              todas tus sesiones (activas e históricas); hacé clic en &quot;Ver detalle&quot; para ver el
-              equity, la posición abierta, los parámetros configurados y las operaciones cerradas de cada
-              una, y desde ahí podés detenerla cuando quieras (queda guardada en el historial, no se
-              borra).
+              Podés tener varias sesiones corriendo en simultáneo. Esta pantalla lista todas tus sesiones
+              (activas e históricas); hacé clic en &quot;Ver detalle&quot; para ver el equity, la posición
+              abierta, los parámetros configurados y las operaciones cerradas de cada una, y desde ahí podés
+              detenerla cuando quieras (queda guardada en el historial, no se borra).
             </InfoGuide>
           </h1>
           <p className="text-sm text-muted">Simulación en vivo sobre el mercado real, sin plata real</p>
@@ -264,12 +171,14 @@ export function PaperTradingClient({
             live={activeCount > 0}
             label={activeCount > 0 ? `${activeCount} sesión(es) activa(s)` : "Sin sesiones activas"}
           />
-          <button
-            onClick={() => setShowForm((v) => !v)}
-            className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white"
-          >
-            {showForm ? "Cancelar" : "+ Nueva sesión"}
-          </button>
+          {paperTradeable.length > 0 && (
+            <button
+              onClick={() => setShowForm((v) => !v)}
+              className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white"
+            >
+              {showForm ? "Cancelar" : "+ Nueva sesión"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -280,27 +189,82 @@ export function PaperTradingClient({
         </div>
       )}
 
-      {showForm && (
+      {strategiesError && (
+        <div className="rounded-3xl bg-panel p-8 text-sm text-muted">
+          <span className="font-semibold text-ink">No se pudieron cargar tus estrategias: </span>
+          {strategiesError}
+        </div>
+      )}
+
+      {!strategiesError && strategies.length === 0 && (
+        <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
+          Todavía no guardaste ninguna estrategia.{" "}
+          <Link href="/constructor" className="font-semibold text-ink underline">
+            Creá una en el Constructor
+          </Link>{" "}
+          para poder paper-tradearla.
+        </div>
+      )}
+
+      {!strategiesError && strategies.length > 0 && paperTradeable.length === 0 && (
+        <div className="rounded-3xl bg-panel p-8 text-center text-sm text-muted">
+          Ninguna de tus estrategias declara la temporalidad 1h (la única que soporta paper trading por
+          ahora).{" "}
+          <Link href="/constructor" className="font-semibold text-ink underline">
+            Agregala en el Constructor
+          </Link>
+          .
+        </div>
+      )}
+
+      {showForm && paperTradeable.length > 0 && (
         <div className="rounded-3xl bg-panel p-8">
           <h2 className="text-lg font-bold text-ink">Iniciar sesión de paper trading</h2>
-          <p className="mt-1 text-sm text-muted">EMA Crossover · 1h</p>
 
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <SymbolCombobox value={form.symbol} symbols={symbols} onChange={(v) => update("symbol", v)} />
-            <Field label="EMA rápida (períodos)" value={form.emaFastPeriod} step="1" min="1" onChange={(v) => update("emaFastPeriod", v)} />
-            <Field label="EMA lenta (períodos)" value={form.emaSlowPeriod} step="1" min="1" onChange={(v) => update("emaSlowPeriod", v)} />
-            <Field label="ATR (períodos)" value={form.atrPeriod} step="1" min="1" onChange={(v) => update("atrPeriod", v)} />
-            <Field label="ATR mínimo (%)" value={form.atrMinValuePct} onChange={(v) => update("atrMinValuePct", v)} />
-            <Field label="Stop Loss (%)" value={form.stopLossPct} onChange={(v) => update("stopLossPct", v)} />
-            <Field label="Take Profit (%)" value={form.takeProfitPct} onChange={(v) => update("takeProfitPct", v)} />
-            <Field label="Trailing Stop (%)" value={form.trailingStopPct} onChange={(v) => update("trailingStopPct", v)} />
-            <Field label="Riesgo por operación (%)" value={form.riskPerTrade} onChange={(v) => update("riskPerTrade", v)} />
-            <Field label="Equity inicial ($)" value={form.initialEquity} step="100" min="100" onChange={(v) => update("initialEquity", v)} />
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Estrategia</span>
+              <select
+                value={strategyId ?? ""}
+                onChange={(e) => selectStrategy(Number(e.target.value))}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              >
+                {paperTradeable.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Símbolo</span>
+              <select
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+              >
+                {(selectedStrategy?.symbols ?? []).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-muted">Temporalidad</span>
+              <input
+                type="text"
+                value={PAPER_TRADING_TIMEFRAME}
+                disabled
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted"
+              />
+            </label>
+            <Field label="Equity inicial ($)" value={initialEquity} onChange={setInitialEquity} />
           </div>
 
           <button
             onClick={createSession}
-            disabled={creating || !form.symbol || !symbolValid}
+            disabled={creating || strategyId === null || !symbol}
             className="mt-6 rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {creating ? "Iniciando…" : "Iniciar paper trading"}
@@ -325,6 +289,7 @@ export function PaperTradingClient({
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-xs uppercase tracking-wide text-muted">
+                  <th className="pb-2 pr-4 font-medium">Estrategia</th>
                   <th className="pb-2 pr-4 font-medium">Símbolo</th>
                   <th className="pb-2 pr-4 font-medium">Estado</th>
                   <th className="pb-2 pr-4 font-medium">Equity inicial</th>
@@ -341,8 +306,15 @@ export function PaperTradingClient({
                   return (
                     <tr key={s.id} className="border-b border-border last:border-0">
                       <td className="py-3 pr-4 font-semibold text-ink">
-                        {s.symbol} <span className="font-normal text-muted">· {s.strategy}</span>
+                        {s.strategy_id ? (
+                          <Link href={`/constructor/${s.strategy_id}`} className="underline">
+                            {s.strategy_name ?? s.strategy}
+                          </Link>
+                        ) : (
+                          (s.strategy_name ?? s.strategy)
+                        )}
                       </td>
+                      <td className="py-3 pr-4 text-ink">{s.symbol}</td>
                       <td className="py-3 pr-4">
                         <StatusBadge status={s.status} />
                       </td>

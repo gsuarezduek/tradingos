@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -46,6 +46,8 @@ class BrokerConnection(Base):
     api_secret_encrypted: Mapped[str] = mapped_column(Text)
     # Solo la usan exchanges que la requieren (ej. Bitget); null para el resto.
     passphrase_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Arranca en False: hay que habilitarlo explícitamente para poder operar de verdad.
+    trading_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="broker_connections")
@@ -56,6 +58,13 @@ class PaperTradingSession(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # Nullable: sesiones creadas antes de que paper trading pasara a partir siempre de
+    # una SavedStrategy quedan sin vínculo (no se backfillea). Toda sesión nueva la
+    # requiere — ver CreateSessionRequest en api/routers/paper_trading.py.
+    strategy_id: Mapped[int | None] = mapped_column(ForeignKey("saved_strategies.id"), nullable=True, index=True)
+    # Copia de SavedStrategy.strategy_type al momento de crear la sesión (mismo criterio
+    # que config_snapshot en StrategyBacktestRun): resuelve la clase de estrategia para
+    # el tick sin depender de que la estrategia guardada siga existiendo o sin cambios.
     strategy: Mapped[str] = mapped_column(String(64))
     symbol: Mapped[str] = mapped_column(String(32))
     timeframe: Mapped[str] = mapped_column(String(8))
@@ -73,6 +82,7 @@ class PaperTradingSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="paper_trading_sessions")
+    saved_strategy: Mapped["SavedStrategy | None"] = relationship(back_populates="paper_trading_sessions")
     trades: Mapped[list["PaperTrade"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
@@ -130,6 +140,9 @@ class SavedStrategy(Base):
         cascade="all, delete-orphan",
         order_by="StrategyBacktestRun.created_at.desc()",
     )
+    # Sin cascade delete: no hay endpoint para borrar una SavedStrategy todavía, y si
+    # llegara a agregarse, el historial de paper trading no debería desaparecer con ella.
+    paper_trading_sessions: Mapped[list["PaperTradingSession"]] = relationship(back_populates="saved_strategy")
 
 
 class StrategyBacktestRun(Base):
@@ -157,3 +170,22 @@ class StrategyBacktestRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     strategy: Mapped["SavedStrategy"] = relationship(back_populates="backtest_runs")
+
+
+class LiveOrder(Base):
+    __tablename__ = "live_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    broker_connection_id: Mapped[int] = mapped_column(ForeignKey("broker_connections.id"), index=True)
+    exchange: Mapped[str] = mapped_column(String(32))
+    symbol: Mapped[str] = mapped_column(String(32))
+    side: Mapped[str] = mapped_column(String(8))
+    quantity: Mapped[float] = mapped_column(Float)
+    # "submitted" (el exchange la aceptó) o "rejected" (el exchange la rechazó,
+    # ver error_message) — no es un tracker de fills/ciclo de vida completo.
+    status: Mapped[str] = mapped_column(String(16))
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

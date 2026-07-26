@@ -39,6 +39,8 @@ interface StrategyConfigJSON {
 
 export interface SessionDetail {
   id: number;
+  strategy_id: number | null;
+  strategy_name: string | null;
   strategy: string;
   symbol: string;
   timeframe: string;
@@ -128,7 +130,14 @@ export function SessionDetailClient({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
-            {session.symbol} · {session.strategy}
+            {session.symbol} ·{" "}
+            {session.strategy_id ? (
+              <Link href={`/constructor/${session.strategy_id}`} className="underline">
+                {session.strategy_name ?? session.strategy}
+              </Link>
+            ) : (
+              (session.strategy_name ?? session.strategy)
+            )}
             <InfoGuide>
               Este es el detalle de una sesión de paper trading: simula la estrategia configurada contra
               el mercado real, sin plata real. El gráfico muestra el equity de los últimos ticks (corre
