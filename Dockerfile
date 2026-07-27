@@ -7,7 +7,7 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src ./src
 COPY scripts ./scripts
-COPY data/historical/BTCUSDT_1h.parquet ./data/historical/BTCUSDT_1h.parquet
+COPY data/historical ./data/historical
 
 RUN pip install --no-cache-dir .
 
