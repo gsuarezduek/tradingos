@@ -50,13 +50,22 @@ class LimitsResponse(BaseModel):
 class RiskSettingsResponse(BaseModel):
     daily_loss_limit_usdt: float | None
     weekly_loss_limit_usdt: float | None
+    max_exposure_per_asset_usdt: float | None
+    max_exposure_per_strategy_usdt: float | None
 
 
 class UpdateRiskSettingsRequest(BaseModel):
     daily_loss_limit_usdt: float | None = None
     weekly_loss_limit_usdt: float | None = None
+    max_exposure_per_asset_usdt: float | None = None
+    max_exposure_per_strategy_usdt: float | None = None
 
-    @field_validator("daily_loss_limit_usdt", "weekly_loss_limit_usdt")
+    @field_validator(
+        "daily_loss_limit_usdt",
+        "weekly_loss_limit_usdt",
+        "max_exposure_per_asset_usdt",
+        "max_exposure_per_strategy_usdt",
+    )
     @classmethod
     def _positive_if_set(cls, v: float | None) -> float | None:
         if v is not None and v <= 0:
@@ -176,6 +185,8 @@ def get_risk_settings(user: User = Depends(get_current_user)) -> RiskSettingsRes
     return RiskSettingsResponse(
         daily_loss_limit_usdt=user.daily_loss_limit_usdt,
         weekly_loss_limit_usdt=user.weekly_loss_limit_usdt,
+        max_exposure_per_asset_usdt=user.max_exposure_per_asset_usdt,
+        max_exposure_per_strategy_usdt=user.max_exposure_per_strategy_usdt,
     )
 
 
@@ -183,15 +194,19 @@ def get_risk_settings(user: User = Depends(get_current_user)) -> RiskSettingsRes
 def update_risk_settings(
     request: UpdateRiskSettingsRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> RiskSettingsResponse:
-    # Reemplaza los dos campos enteros (no un merge parcial) — el cliente siempre manda
-    # el estado completo del form; un campo en null lo desactiva explícitamente.
+    # Reemplaza los cuatro campos enteros (no un merge parcial) — el cliente siempre
+    # manda el estado completo del form; un campo en null lo desactiva explícitamente.
     user.daily_loss_limit_usdt = request.daily_loss_limit_usdt
     user.weekly_loss_limit_usdt = request.weekly_loss_limit_usdt
+    user.max_exposure_per_asset_usdt = request.max_exposure_per_asset_usdt
+    user.max_exposure_per_strategy_usdt = request.max_exposure_per_strategy_usdt
     db.commit()
     db.refresh(user)
     return RiskSettingsResponse(
         daily_loss_limit_usdt=user.daily_loss_limit_usdt,
         weekly_loss_limit_usdt=user.weekly_loss_limit_usdt,
+        max_exposure_per_asset_usdt=user.max_exposure_per_asset_usdt,
+        max_exposure_per_strategy_usdt=user.max_exposure_per_strategy_usdt,
     )
 
 

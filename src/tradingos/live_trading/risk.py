@@ -8,6 +8,14 @@ from sqlalchemy.orm import Session
 
 from tradingos.db.models import LiveTrade, LiveTradingSession, User
 
+# Estados de LiveTradingSession cuya current_position cuenta como exposición real
+# todavía abierta. "risk_paused" es una pausa que decide el propio sistema (sigue
+# siendo su responsabilidad, ver pause_active_sessions_for_risk); "stopped" es una
+# decisión explícita del usuario y, como documenta stop_session, a partir de ahí
+# gestionar esa posición "le corresponde a él, no al sistema" — se excluye a propósito
+# aunque pueda seguir habiendo una posición real abierta en el exchange.
+_EXPOSURE_COUNTING_STATUSES = ("active", "risk_paused")
+
 
 @dataclass
 class LossLimitBreach:
@@ -66,3 +74,59 @@ def pause_active_sessions_for_risk(db: Session, user: User, breach: LossLimitBre
         session.paused_reason = reason
     db.commit()
     return len(sessions)
+
+
+def open_exposure_usdt(
+    db: Session, user: User, *, symbol: str | None = None, strategy_id: int | None = None
+) -> float:
+    """Suma la exposición abierta (quantity * entry_price al momento de abrir) de las
+    LiveTradingSession del usuario cuyo status cuenta como exposición real (ver
+    _EXPOSURE_COUNTING_STATUSES) y que tienen una posición abierta ahora mismo.
+
+    `symbol` y `strategy_id` son filtros independientes (no una intersección): pasar
+    solo uno agrega a través de todas las estrategias/símbolos, no ambos a la vez.
+    Se suma en Python, no en SQL, porque current_position es JSON y no hay precedente
+    de filtrarlo a nivel de base de datos (ver live_trading/tick.py).
+
+    Solo ve lo que el propio sistema abrió — igual que check_loss_limits solo ve
+    LiveTrade.pnl de trades que el sistema ejecutó — así que no detecta exposición de
+    operaciones manuales hechas directamente en el exchange, fuera de la plataforma.
+    """
+    query = db.query(LiveTradingSession).filter(
+        LiveTradingSession.user_id == user.id,
+        LiveTradingSession.status.in_(_EXPOSURE_COUNTING_STATUSES),
+    )
+    if symbol is not None:
+        query = query.filter(LiveTradingSession.symbol == symbol)
+    if strategy_id is not None:
+        query = query.filter(LiveTradingSession.strategy_id == strategy_id)
+
+    total = 0.0
+    for session in query.all():
+        position = session.current_position
+        if position is not None:
+            total += position["quantity"] * position["entry_price"]
+    return total
+
+
+def exposure_capped_amount_usdt(
+    db: Session, user: User, session: LiveTradingSession, amount_usdt: float
+) -> float:
+    """Clampea el monto de una orden de apertura nueva al headroom que le queda al
+    usuario bajo sus topes de exposición configurados (por activo y por estrategia,
+    tomando el más chico de los dos si ambos están configurados). Sin límites
+    configurados devuelve amount_usdt sin tocar. El headroom nunca es negativo: si ya
+    se superó el tope (por ejemplo, bajando el límite después de tener posiciones
+    abiertas), esta función devuelve 0.0 en vez de un número negativo.
+    """
+    headrooms = []
+    if user.max_exposure_per_asset_usdt is not None:
+        used = open_exposure_usdt(db, user, symbol=session.symbol)
+        headrooms.append(max(0.0, user.max_exposure_per_asset_usdt - used))
+    if user.max_exposure_per_strategy_usdt is not None:
+        used = open_exposure_usdt(db, user, strategy_id=session.strategy_id)
+        headrooms.append(max(0.0, user.max_exposure_per_strategy_usdt - used))
+
+    if not headrooms:
+        return amount_usdt
+    return min(amount_usdt, *headrooms)

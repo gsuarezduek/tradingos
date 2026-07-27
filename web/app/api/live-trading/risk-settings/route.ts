@@ -24,6 +24,8 @@ export async function PATCH(request: Request) {
     body: JSON.stringify({
       daily_loss_limit_usdt: body.daily_loss_limit_usdt,
       weekly_loss_limit_usdt: body.weekly_loss_limit_usdt,
+      max_exposure_per_asset_usdt: body.max_exposure_per_asset_usdt,
+      max_exposure_per_strategy_usdt: body.max_exposure_per_strategy_usdt,
     }),
     signal: AbortSignal.timeout(10000),
   });

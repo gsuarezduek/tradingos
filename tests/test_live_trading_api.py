@@ -128,23 +128,48 @@ def test_risk_settings_round_trip(monkeypatch):
 
     initial = client.get("/live-trading/risk-settings", headers=_auth_headers(token))
     assert initial.status_code == 200
-    assert initial.json() == {"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": None}
+    assert initial.json() == {
+        "daily_loss_limit_usdt": None,
+        "weekly_loss_limit_usdt": None,
+        "max_exposure_per_asset_usdt": None,
+        "max_exposure_per_strategy_usdt": None,
+    }
 
     updated = client.patch(
         "/live-trading/risk-settings",
-        json={"daily_loss_limit_usdt": 100.0, "weekly_loss_limit_usdt": 300.0},
+        json={
+            "daily_loss_limit_usdt": 100.0,
+            "weekly_loss_limit_usdt": 300.0,
+            "max_exposure_per_asset_usdt": 500.0,
+            "max_exposure_per_strategy_usdt": 800.0,
+        },
         headers=_auth_headers(token),
     )
     assert updated.status_code == 200
-    assert updated.json() == {"daily_loss_limit_usdt": 100.0, "weekly_loss_limit_usdt": 300.0}
+    assert updated.json() == {
+        "daily_loss_limit_usdt": 100.0,
+        "weekly_loss_limit_usdt": 300.0,
+        "max_exposure_per_asset_usdt": 500.0,
+        "max_exposure_per_strategy_usdt": 800.0,
+    }
 
     disabled = client.patch(
         "/live-trading/risk-settings",
-        json={"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": 300.0},
+        json={
+            "daily_loss_limit_usdt": None,
+            "weekly_loss_limit_usdt": 300.0,
+            "max_exposure_per_asset_usdt": None,
+            "max_exposure_per_strategy_usdt": 800.0,
+        },
         headers=_auth_headers(token),
     )
     assert disabled.status_code == 200
-    assert disabled.json() == {"daily_loss_limit_usdt": None, "weekly_loss_limit_usdt": 300.0}
+    assert disabled.json() == {
+        "daily_loss_limit_usdt": None,
+        "weekly_loss_limit_usdt": 300.0,
+        "max_exposure_per_asset_usdt": None,
+        "max_exposure_per_strategy_usdt": 800.0,
+    }
 
 
 def test_risk_settings_rejects_non_positive_limit(monkeypatch):
@@ -153,6 +178,13 @@ def test_risk_settings_rejects_non_positive_limit(monkeypatch):
     response = client.patch(
         "/live-trading/risk-settings",
         json={"daily_loss_limit_usdt": -10.0, "weekly_loss_limit_usdt": None},
+        headers=_auth_headers(token),
+    )
+    assert response.status_code == 422
+
+    response = client.patch(
+        "/live-trading/risk-settings",
+        json={"max_exposure_per_asset_usdt": -10.0},
         headers=_auth_headers(token),
     )
     assert response.status_code == 422

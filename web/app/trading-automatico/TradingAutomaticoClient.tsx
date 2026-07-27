@@ -11,6 +11,8 @@ import type { Connection } from "@/app/operar/OperarClient";
 export interface RiskSettings {
   daily_loss_limit_usdt: number | null;
   weekly_loss_limit_usdt: number | null;
+  max_exposure_per_asset_usdt: number | null;
+  max_exposure_per_strategy_usdt: number | null;
 }
 
 interface CurrentPosition {
@@ -100,6 +102,12 @@ export function TradingAutomaticoClient({
   const [weeklyLimitInput, setWeeklyLimitInput] = useState<string>(
     initialRiskSettings.weekly_loss_limit_usdt?.toString() ?? "",
   );
+  const [assetExposureInput, setAssetExposureInput] = useState<string>(
+    initialRiskSettings.max_exposure_per_asset_usdt?.toString() ?? "",
+  );
+  const [strategyExposureInput, setStrategyExposureInput] = useState<string>(
+    initialRiskSettings.max_exposure_per_strategy_usdt?.toString() ?? "",
+  );
   const [savingRiskSettings, setSavingRiskSettings] = useState(false);
   const [riskSettingsError, setRiskSettingsError] = useState<string | null>(null);
   const [riskSettingsSaved, setRiskSettingsSaved] = useState(false);
@@ -115,6 +123,8 @@ export function TradingAutomaticoClient({
         body: JSON.stringify({
           daily_loss_limit_usdt: dailyLimitInput === "" ? null : Number(dailyLimitInput),
           weekly_loss_limit_usdt: weeklyLimitInput === "" ? null : Number(weeklyLimitInput),
+          max_exposure_per_asset_usdt: assetExposureInput === "" ? null : Number(assetExposureInput),
+          max_exposure_per_strategy_usdt: strategyExposureInput === "" ? null : Number(strategyExposureInput),
         }),
       });
       const data = await response.json();
@@ -280,10 +290,11 @@ export function TradingAutomaticoClient({
       <div className="rounded-3xl bg-panel p-8">
         <h2 className="text-lg font-bold text-ink">Límites de riesgo</h2>
         <p className="mt-1 text-sm text-muted">
-          Tope de pérdida realizada (suma de todas tus sesiones) antes de que el sistema pause solo todo. Dejalo
-          vacío para desactivar.
+          Tope de pérdida realizada (suma de todas tus sesiones) antes de que el sistema pause solo todo, y tope de
+          exposición abierta por activo y por estrategia para no concentrar todo en una sola posición entre varias
+          sesiones. Dejalos vacíos para desactivar.
         </p>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-muted">Límite diario (USDT)</span>
             <input
@@ -308,15 +319,39 @@ export function TradingAutomaticoClient({
               className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
             />
           </label>
-          <div className="flex items-end">
-            <button
-              onClick={saveRiskSettings}
-              disabled={savingRiskSettings}
-              className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {savingRiskSettings ? "Guardando…" : "Guardar límites"}
-            </button>
-          </div>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Exposición máx. por activo (USDT)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Sin límite"
+              value={assetExposureInput}
+              onChange={(e) => setAssetExposureInput(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-muted">Exposición máx. por estrategia (USDT)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Sin límite"
+              value={strategyExposureInput}
+              onChange={(e) => setStrategyExposureInput(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-ink"
+            />
+          </label>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={saveRiskSettings}
+            disabled={savingRiskSettings}
+            className="rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {savingRiskSettings ? "Guardando…" : "Guardar límites"}
+          </button>
         </div>
         {riskSettingsSaved && <p className="mt-3 text-sm text-emerald-600">Límites guardados.</p>}
         {riskSettingsError && (

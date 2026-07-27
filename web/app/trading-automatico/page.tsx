@@ -70,7 +70,12 @@ async function fetchLimits(token: string): Promise<{ eligibleTimeframes: string[
 }
 
 async function fetchRiskSettings(token: string): Promise<{ riskSettings: RiskSettings; error: string | null }> {
-  const fallback: RiskSettings = { daily_loss_limit_usdt: null, weekly_loss_limit_usdt: null };
+  const fallback: RiskSettings = {
+    daily_loss_limit_usdt: null,
+    weekly_loss_limit_usdt: null,
+    max_exposure_per_asset_usdt: null,
+    max_exposure_per_strategy_usdt: null,
+  };
   try {
     const response = await fetch(`${API_BASE_URL}/live-trading/risk-settings`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -129,7 +134,12 @@ export default async function TradingAutomaticoPage() {
         connections={[]}
         connectionsError="no autenticado"
         eligibleTimeframes={[]}
-        initialRiskSettings={{ daily_loss_limit_usdt: null, weekly_loss_limit_usdt: null }}
+        initialRiskSettings={{
+          daily_loss_limit_usdt: null,
+          weekly_loss_limit_usdt: null,
+          max_exposure_per_asset_usdt: null,
+          max_exposure_per_strategy_usdt: null,
+        }}
       />
     );
   }

@@ -15,7 +15,11 @@ from tradingos.core.types import Side
 from tradingos.data.binance_downloader import INTERVAL_MS, fetch_klines
 from tradingos.db import crypto
 from tradingos.db.models import LiveOrder, LiveTrade, LiveTradingSession
-from tradingos.live_trading.risk import check_loss_limits, pause_active_sessions_for_risk
+from tradingos.live_trading.risk import (
+    check_loss_limits,
+    exposure_capped_amount_usdt,
+    pause_active_sessions_for_risk,
+)
 
 # Mismo motor y misma ventana que paper_trading/tick.py — ver ese módulo para el porqué
 # de LOOKBACK_BARS (en velas, no en tiempo) y su límite conocido (una posición abierta
@@ -110,10 +114,13 @@ def _submit_open(
     equity = _fetch_usdt_free_balance(spec, api_key, api_secret, passphrase)
     qty = position_size(equity, price_ref, stop if stop is not None else price_ref, config)
     amount_usdt = qty * price_ref
+    amount_usdt = exposure_capped_amount_usdt(db, session.user, session, amount_usdt)
     if amount_usdt <= 0:
-        # Sin saldo (o riesgo configurado en 0): no hay nada que mandar. Se reintenta
-        # solo, el próximo tick, sin necesidad de ninguna acción especial acá.
+        # Sin saldo, riesgo configurado en 0, o tope de exposición por activo/estrategia
+        # ya agotado: no hay nada que mandar. Se reintenta solo, el próximo tick, sin
+        # necesidad de ninguna acción especial acá.
         return
+    qty = amount_usdt / price_ref  # re-derivar qty: el clamp de arriba pudo reducir amount_usdt
 
     order = _submit_order(db, session, spec, api_key, api_secret, passphrase, "buy", amount_usdt)
     if order.status != "submitted":

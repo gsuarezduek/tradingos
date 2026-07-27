@@ -28,6 +28,13 @@ class User(Base):
     # (LiveTrade.pnl) de todas las sesiones del usuario en una ventana rolling de 24h/7d.
     daily_loss_limit_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
     weekly_loss_limit_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Tope de exposición abierta agregada (ver live_trading/risk.py::open_exposure_usdt),
+    # también USDT absoluto y opt-in, mismo motivo que los límites de pérdida de arriba.
+    # A diferencia de esos, no pausa nada: clampea el tamaño de la próxima orden de
+    # apertura si otras LiveTradingSession del usuario ya están expuestas al mismo
+    # activo o a la misma estrategia guardada.
+    max_exposure_per_asset_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_exposure_per_strategy_usdt: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     broker_connections: Mapped[list["BrokerConnection"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

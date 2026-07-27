@@ -346,6 +346,146 @@ def test_lookback_start_scales_wall_clock_window_with_timeframe():
         assert abs((actual - expected).total_seconds()) < 5
 
 
+def _position(*, quantity: float, entry_price: float) -> dict:
+    return {
+        "side": "long",
+        "entry_price": entry_price,
+        "quantity": quantity,
+        "stop_loss": None,
+        "take_profit": None,
+        "entry_timestamp": "2024-01-01T00:00:00+00:00",
+        "opened_at": "2024-01-01T00:00:00+00:00",
+    }
+
+
+def test_run_tick_open_order_is_capped_by_asset_exposure_limit(monkeypatch, synthetic_ohlcv):
+    truncated = synthetic_ohlcv.iloc[:44].reset_index(drop=True)
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: truncated)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+    # filled_quantity=None simula un exchange que no informa el fill (ver comentario de
+    # LiveOrder.filled_quantity): fuerza el camino donde current_position depende de que
+    # _submit_open haya re-derivado qty a partir del amount_usdt ya clampeado.
+    _mock_fill(monkeypatch, filled_quantity=None, avg_price=101.5)
+    price_ref = float(truncated.iloc[-1]["close"])
+
+    db = SessionLocal()
+    try:
+        user = _make_user(db, "assetexposed@example.com", max_exposure_per_asset_usdt=10.0)
+        connection = _make_connection(db, user)
+        strategy = _make_strategy(db, user)
+        other_strategy = _make_strategy(db, user)
+        # otra sesión del mismo usuario, mismo símbolo, ya expuesta en 5.0 de los 10.0 permitidos
+        _make_session(
+            db, user, other_strategy, connection, current_position=_position(quantity=1.0, entry_price=5.0)
+        )
+        session = _make_session(db, user, strategy, connection)
+
+        tick_module.run_tick_for_session(db, session)
+
+        orders = db.query(LiveOrder).filter(LiveOrder.live_trading_session_id == session.id).all()
+        assert len(orders) == 1
+        assert orders[0].amount_usdt == 5.0  # headroom = 10.0 - 5.0, no el tamaño que hubiera dado el riesgo solo
+        assert session.current_position is not None
+        # qty re-derivado del amount_usdt ya clampeado (5.0), sobre el price_ref real del
+        # tick — no sobre el qty original (sin clampear) que hubiera dado position_size().
+        assert abs(session.current_position["quantity"] - 5.0 / price_ref) < 1e-9
+    finally:
+        db.close()
+
+
+def test_run_tick_open_order_is_capped_by_strategy_exposure_limit(monkeypatch, synthetic_ohlcv):
+    truncated = synthetic_ohlcv.iloc[:44].reset_index(drop=True)
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: truncated)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+    _mock_fill(monkeypatch, filled_quantity=None, avg_price=101.5)
+
+    db = SessionLocal()
+    try:
+        user = _make_user(db, "strategyexposed@example.com", max_exposure_per_strategy_usdt=10.0)
+        connection = _make_connection(db, user)
+        strategy = _make_strategy(db, user)
+        # otra sesión de la MISMA estrategia guardada pero otro símbolo, ya expuesta en 5.0
+        _make_session(
+            db,
+            user,
+            strategy,
+            connection,
+            symbol="ETHUSDT",
+            current_position=_position(quantity=1.0, entry_price=5.0),
+        )
+        session = _make_session(db, user, strategy, connection, symbol="BTCUSDT")
+
+        tick_module.run_tick_for_session(db, session)
+
+        orders = db.query(LiveOrder).filter(LiveOrder.live_trading_session_id == session.id).all()
+        assert len(orders) == 1
+        assert orders[0].amount_usdt == 5.0
+    finally:
+        db.close()
+
+
+def test_run_tick_skips_open_when_exposure_headroom_is_exhausted(monkeypatch, synthetic_ohlcv):
+    truncated = synthetic_ohlcv.iloc[:44].reset_index(drop=True)
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: truncated)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("headroom agotado: no debería mandar ninguna orden")
+
+    monkeypatch.setattr("tradingos.api.routers.brokers.binance_place_market_order", _fail_if_called)
+
+    db = SessionLocal()
+    try:
+        user = _make_user(db, "exhausted@example.com", max_exposure_per_asset_usdt=10.0)
+        connection = _make_connection(db, user)
+        strategy = _make_strategy(db, user)
+        other_strategy = _make_strategy(db, user)
+        # ya se pasó del tope de 10.0
+        _make_session(
+            db, user, other_strategy, connection, current_position=_position(quantity=1.0, entry_price=15.0)
+        )
+        session = _make_session(db, user, strategy, connection)
+
+        tick_module.run_tick_for_session(db, session)
+
+        assert session.current_position is None
+        assert db.query(LiveOrder).filter(LiveOrder.live_trading_session_id == session.id).count() == 0
+    finally:
+        db.close()
+
+
+def test_run_tick_close_order_is_never_capped_by_exposure_limit(monkeypatch, synthetic_ohlcv):
+    truncated = synthetic_ohlcv.iloc[:44].reset_index(drop=True)
+    _mock_balance(monkeypatch, usdt_free=10_000.0)
+    _mock_fill(monkeypatch, filled_quantity=0.05, avg_price=101.5)
+    monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: truncated)
+
+    db = SessionLocal()
+    try:
+        # límite deliberadamente más chico que la posición que se va a abrir y cerrar:
+        # el clamp no debe aplicar nunca al cierre, solo a la apertura.
+        user = _make_user(db, "closenotcapped@example.com", max_exposure_per_asset_usdt=1.0)
+        connection = _make_connection(db, user)
+        strategy = _make_strategy(db, user)
+        session = _make_session(db, user, strategy, connection)
+
+        tick_module.run_tick_for_session(db, session)
+        assert session.current_position is not None
+        opened_quantity = session.current_position["quantity"]
+
+        monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: synthetic_ohlcv)
+        _mock_fill(monkeypatch, filled_quantity=opened_quantity, avg_price=95.0)
+
+        tick_module.run_tick_for_session(db, session)
+
+        assert session.current_position is None
+        trades = db.query(LiveTrade).filter(LiveTrade.session_id == session.id).all()
+        assert len(trades) == 1
+        assert trades[0].quantity == opened_quantity  # se liquidó el 100%, no un monto clampeado
+    finally:
+        db.close()
+
+
 def test_run_tick_works_for_non_1h_timeframe(monkeypatch, synthetic_ohlcv):
     monkeypatch.setattr(tick_module, "fetch_klines", lambda symbol, timeframe, start: synthetic_ohlcv)
     _mock_balance(monkeypatch, usdt_free=10_000.0)
